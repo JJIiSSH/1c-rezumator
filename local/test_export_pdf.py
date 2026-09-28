@@ -33,4 +33,25 @@ class ExportPDFTests(unittest.TestCase):
                 if 'Дополнительная информация' in (p.extract_text() or ''):
                     self.assertIn('ФИНАЛЬНАЯ',p.extract_text())
 
+    def test_specialization_fallback_and_about_contacts(self):
+        text='Иван Тестовый\nTelegram: @test\nПроживает: Москва\nГотов к переезду, готов к командировкам\nЖелаемая должность и зарплата\nВедущий программист 1С\nДополнительная информация\nОбо мне\nАвтоматизирую торговый учёт. В свободное время занимаюсь спортом.\nДля связи: Telegram: @test; email: test@example.com'
+        data=render(text,{'name':'Иван Тестовый'},'2026-09-28')
+        with pdfplumber.open(io.BytesIO(data)) as pdf:
+            content='\n'.join(p.extract_text() or '' for p in pdf.pages)
+            self.assertIn('Готов к переезду, готов к командировкам',content)
+            self.assertEqual(content.count('Специализации:'),1)
+            self.assertIn('Программист, разработчик',content)
+            self.assertIn('В свободное время занимаюсь спортом',content)
+            about=content.split('Дополнительная информация',1)[1]
+            self.assertIn('Для связи: Telegram: @test; email: test@example.com',about)
+
+    def test_explicit_specializations_are_preserved_without_duplicates(self):
+        text='Желаемая должность и зарплата\nПрограммист 1С\nСпециализации:\n- Программист, разработчик\n- Системный аналитик\nОпыт работы\nКомпания\nПрограммист 1С\nЯнварь 2023 - настоящее время\n- Разработка отчётов.'
+        data=render(text,{},'2026-09-28')
+        with pdfplumber.open(io.BytesIO(data)) as pdf:
+            content='\n'.join(p.extract_text() or '' for p in pdf.pages)
+            self.assertEqual(content.count('Специализации:'),1)
+            self.assertEqual(content.count('Программист, разработчик'),1)
+            self.assertIn('Системный аналитик',content)
+
 if __name__=='__main__':unittest.main()

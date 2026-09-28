@@ -222,7 +222,10 @@ def render(text, candidate=None, updated_at=None):
     if name: story.append(para(name,name_style))
     for line in header:story.append(para(line))
     story.extend([Indenter(-left),Spacer(1,12),SectionHeading('Желаемая должность и зарплата'),para(title,bold)])
-    for line in desired[1:]: story.append(para(line))
+    details=list(desired[1:])
+    if not any(re.match(r'^специализаци[яи](?:\s*:|$)',line,re.I) for line in details):
+        details=['Специализации:','- Программист, разработчик']+details
+    for line in details: story.append(para(line))
     if sections.get('experience'):
         total=total_duration(jobs,today)
         story.append(SectionHeading('Опыт работы'+(' - '+total if total else '')))
