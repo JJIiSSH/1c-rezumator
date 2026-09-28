@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="ru">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="light"><title>1с-резюматор</title><meta name="description" content="Локальная мастерская резюме разработчиков 1С с генерацией через подписку ChatGPT или Claude."><link rel="stylesheet" href="/style.css"><script type="module" src="/app.js"></script></head>
+<body>
+<div class="app-shell">
+ <aside class="rail"><a class="brand" href="/"><span class="brand-mark">1с<span>р</span></span><span>1с-резюматор<small>Мастерская резюме</small></span></a>
+ <div class="rail-caption"><span>УЧЕНИКИ</span><span id="studentCount">—</span></div><nav id="students" aria-label="Выбор ученика"></nav>
+ <div class="rail-actions">
+  <button id="addStudent" class="add-student">＋ Добавить ученика</button>
+  <button id="importDrive" class="add-student">Загрузить из Google Drive</button>
+  <button id="generateMissing" class="add-student" title="Последовательно создать резюме всем заполненным ученикам, у которых ещё нет результата">Сгенерировать без резюме</button>
+  <button id="stopGenerationBatch" class="add-student stop-batch hidden">Остановить массовую генерацию</button>
+  <button id="exportAllNotion" class="add-student" title="Создать страницы для готовых резюме, которых ещё нет в Notion">Добавить готовые в Notion</button>
+ </div>
+ <div id="driveStatus" class="drive-status" role="status"></div>
+ <div id="batchStatus" class="batch-status" role="status" aria-live="polite"></div>
+ <div class="rail-bottom"><span class="local-icon">⌘</span><div>На этом компьютере<small>Анкеты сохраняются локально</small></div></div>
+ </aside>
+ <div class="workspace"><header class="topbar"><div class="breadcrumb">Курс 1С <span>/</span> Резюме ученика</div><div class="model-controls"><label><span class="sr-only">Сервис генерации</span><select id="generationProvider" aria-label="Сервис генерации" disabled><option value="openai">ChatGPT</option><option value="anthropic">Claude</option></select></label><span class="account" id="account">Проверяем подписку…</span><label><span class="sr-only">Модель генерации</span><select id="generationModel" aria-label="Модель генерации" disabled><option>Загрузка моделей…</option></select></label><label><span class="sr-only">Уровень рассуждения</span><select id="generationEffort" aria-label="Уровень рассуждения" disabled><option>high</option></select></label><button id="refreshModels" class="text-button" title="Обновить список моделей" aria-label="Обновить список моделей">↻</button><span id="modelSettingsStatus" role="status"></span></div></header>
+ <main><div id="desktopAccount" class="desktop-account hidden">
+ <div><strong id="desktopAccountLabel">Подключите свою подписку</strong><p id="desktopAccountMessage">Вход откроется в браузере. Анкеты хранятся на этом Mac.</p><form id="claudeCodeForm" class="claude-code-form hidden"><input id="claudeLoginCode" autocomplete="off" placeholder="Код со страницы Claude"><button class="secondary-button" type="submit">Продолжить</button></form></div>
+ <div class="desktop-account-actions"><button id="loginChatGPT" class="secondary-button">Войти</button><a id="continueLogin" class="hidden" target="_blank" rel="noreferrer">Открыть вход ещё раз</a><button id="cancelLogin" class="text-button hidden">Отменить вход</button><button id="logoutChatGPT" class="text-button hidden">Выйти</button><button id="connectionSettings" class="text-button">Google Drive и Notion</button></div>
+ </div><dialog id="connectionsDialog" aria-labelledby="connectionsTitle">
+ <div class="connections-heading"><div><p class="eyebrow">НАСТРОЙКА ПРИЛОЖЕНИЯ</p><h2 id="connectionsTitle">Подключения</h2></div><button class="text-button" id="closeConnections" type="button" aria-label="Закрыть подключения">Закрыть</button></div>
+ <p>Подключите свои аккаунты, затем выберите таблицу и пространство. Генерация и PDF доступны и без этих сервисов.</p>
+ <p id="connectionsMessage" role="status" aria-live="polite"></p>
+ <div id="connectionsLogin" class="hidden"><p>Сначала войдите в ChatGPT в верхней панели приложения. Подключения будут принадлежать этому аккаунту.</p><button id="connectionsGoLogin" class="secondary-button">Перейти ко входу</button></div>
+ <div id="connectionProviders"></div>
+ <section id="driveSetup" class="connection-setup"><h3>Таблица с учениками</h3><form id="driveConnectionForm"><label class="field"><span>Ссылка на Google-таблицу</span><input id="connectionSheet" type="url" required placeholder="https://docs.google.com/spreadsheets/d/…"></label><p class="hint">Откройте нужную вкладку таблицы и скопируйте адрес. Проверим доступ и заголовки анкеты.</p><button id="verifyDrive" class="secondary-button" type="submit">Проверить и сохранить таблицу</button></form><p id="driveConnectionResult" role="status"></p></section>
+ <section id="notionSetup" class="connection-setup"><h3>Пространство Notion</h3><p>Определим пространство подключённого аккаунта. Его ID вводить не нужно.</p><button id="verifyNotion" class="secondary-button" type="button">Найти моё пространство</button><p id="notionConnectionResult" role="status"></p><button id="selectNotionWorkspace" class="primary-button hidden" type="button">Использовать это пространство</button></section>
+ <div class="connections-footer"><button id="refreshConnections" class="text-button" type="button">Проверить подключения</button><span>Доступ подтверждается в браузере. Пароли резюматор не запрашивает.</span></div>
+ </dialog><div class="page-heading"><div><p class="eyebrow">ОТ ОПЫТА К ГОТОВОМУ РЕЗЮМЕ</p><h1 id="candidateHeading">Новая анкета</h1><p class="subheading">Исходные данные, твои настройки и результат — в одном месте.</p></div><span id="saveStatus" class="save-status" aria-live="polite">Загрузка…</span></div>
+ <div class="editor-grid"><section class="input-panel"><div class="tabbar" role="tablist" aria-label="Исходные данные"><button role="tab" aria-selected="true" class="tab active" data-tab="questionnaire">01 <span>Анкета</span></button><button role="tab" aria-selected="false" class="tab" data-tab="settings">02 <span>Настройки</span></button><button role="tab" aria-selected="false" class="tab" data-tab="prompt">03 <span>Промпт</span></button></div><div id="formContent" class="form-content"></div></section>
+ <section class="result-panel"><div class="result-tabs" role="tablist" aria-label="Материал для подготовки"><button type="button" class="result-tab active" role="tab" aria-selected="true" data-result-view="resume">Резюме</button><button type="button" class="result-tab" role="tab" aria-selected="false" data-result-view="legend">Легенда</button></div><div class="result-head"><div><span class="eyebrow">РАБОЧАЯ ВЕРСИЯ</span><h2 id="resultHeading">Резюме и проверка</h2></div><span class="version-label" id="versionLabel">Черновик</span></div>
+ <div id="resumeReadiness"><div class="readiness"><div class="readiness-top"><strong>Что есть в исходных данных?</strong><span id="readinessCount">0 / 6</span></div><progress id="readinessBar" aria-label="Заполненность исходных данных" value="0" max="6"></progress><p>Задачи и конфигурации можно оставить пустыми — предложим их при генерации.</p></div>
+ <div id="inputChecks" class="input-checks"></div></div><div id="legendIntro" class="legend-intro hidden"><p>Рассказ о себе и проектах по текущему резюме. Личный вклад, нагрузки, факапы и задачи, которыми гордишься.</p><label class="field"><span>Что раскрыть подробнее · необязательно</span><textarea id="legendNotes" maxlength="12000" placeholder="Например: подробно раскрыть обмен с маркетплейсом и ошибку сопоставления товаров"></textarea></label><p id="legendSourceHint"></p></div>
+ <div class="generate-area"><button id="generate" class="primary-button" disabled><span>✦</span> Сгенерировать резюме</button><button id="cancel" class="text-button hidden">Остановить</button><p id="generationSubscription">Через выбранную подписку · без API-ключа</p><div id="jobStatus" class="job-status hidden" role="status"></div></div>
+ <div id="resultContent"><div class="empty-result"><div class="paper-icon"><i></i><i></i><i></i></div><h3>Здесь появится резюме</h3><p>Заполни анкету или загрузи PDF. Мы соберём текст и покажем, какие сведения стоит дополнить.</p></div></div>
+ </section></div>
+ </main></div>
+</div><div id="toast" class="toast hidden" role="status"></div><div id="printDocument"></div>
+</body></html>

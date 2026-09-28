@@ -1,0 +1,21 @@
+# Local state and credentials
+**/.data/
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+.auth/
+.codex/
+.claude/
+# Dependencies and build output
+node_modules/
+.venv/
+__pycache__/
+*.pyc
+stage/
+dist/
+/desktop/build/
+coverage/
+*.log
+.DS_Store

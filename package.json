@@ -1,0 +1,11 @@
+{
+  "name": "1c-rezumator-workspace",
+  "version": "0.2.0",
+  "private": true,
+  "scripts": {
+    "start": "npm --prefix local start",
+    "test": "npm --prefix local test",
+    "desktop:start": "npm --prefix desktop start",
+    "desktop:build": "npm --prefix desktop run build:mac"
+  }
+}

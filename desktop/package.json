@@ -1,0 +1,61 @@
+{
+  "name": "rezumator-desktop",
+  "productName": "1с-резюматор",
+  "version": "0.2.0",
+  "private": true,
+  "description": "Локальная мастерская резюме разработчиков 1С",
+  "author": "1с-резюматор",
+  "main": "main.cjs",
+  "scripts": {
+    "prepare:service": "node scripts/prepare-service.mjs",
+    "start": "npm run prepare:service && electron .",
+    "build:mac": "npm run prepare:service && electron-builder --mac --arm64",
+    "test": "node --test test-desktop.mjs"
+  },
+  "devDependencies": {
+    "electron": "44.3.0",
+    "electron-builder": "26.15.3",
+    "@openai/codex": "0.154.0",
+    "@anthropic-ai/claude-code": "2.1.270"
+  },
+  "build": {
+    "appId": "ru.rezumator.desktop",
+    "asar": true,
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.cjs",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "stage/service",
+        "to": "service"
+      },
+      {
+        "from": "stage/runtime",
+        "to": "runtime"
+      },
+      {
+        "from": "THIRD-PARTY-NOTICES.md",
+        "to": "THIRD-PARTY-NOTICES.md"
+      }
+    ],
+    "mac": {
+      "category": "public.app-category.productivity",
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "identity": null,
+      "icon": "assets/icon.icns",
+      "minimumSystemVersion": "12.0.0"
+    },
+    "artifactName": "1c-rezumator-${version}-${arch}.${ext}",
+    "dmg": {
+      "title": "1с-резюматор",
+      "sign": false
+    }
+  }
+}
