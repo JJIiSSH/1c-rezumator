@@ -1,6 +1,6 @@
 import {same,studentChanges,keepPendingEdits} from '/state-sync.mjs';
 import {completeness,normalizeResumeText,inputSignature,legendSignature,studentStatus} from '/engine.mjs';
-import {studentsMissingResume,studentsPendingNotion,notionEntryPreventsDuplicate} from '/batch-operations.mjs';
+import {batchResumeEligible,studentsMissingResume,studentsWithoutReadyResume,studentsPendingNotion,notionEntryPreventsDuplicate} from '/batch-operations.mjs';
 const $=s=>document.querySelector(s);
 const escape=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 let students=[],selected='',tab='questionnaire',token='',currentRulesVersion='',currentLegendRulesVersion='',resultView='resume',generationStarting=false,connected=false,activeJob=null,saveTimer=null,toastTimer=null;
@@ -321,12 +321,16 @@ function saveGenerationBatch(){
  else sessionStorage.removeItem('rezumator:generation-batch');
 }
 function renderBatchControls(){
- const generate=$('#generateMissing'),stop=$('#stopGenerationBatch'),notion=$('#exportAllNotion'),status=$('#batchStatus');if(!generate||!stop||!notion||!status)return;
- const missing=studentsMissingResume(students).length,pending=studentsPendingNotion(students,notionEntries).length;
+ const generate=$('#generateMissing'),generateNotReady=$('#generateNotReady'),stop=$('#stopGenerationBatch'),notion=$('#exportAllNotion'),status=$('#batchStatus');if(!generate||!generateNotReady||!stop||!notion||!status)return;
+ const missing=studentsMissingResume(students).length,notReady=studentsWithoutReadyResume(students).length,pending=studentsPendingNotion(students,notionEntries).length;
+ generate.textContent=`Сгенерировать всем без резюме · ${missing}`;
+ generateNotReady.textContent=`Сгенерировать без галочки «Готово» · ${notReady}`;
  if(generationBatch?.running){
   const current=Math.min(generationBatch.completed+generationBatch.failed+1,generationBatch.total);
-  generate.textContent=`Генерация · ${current}/${generationBatch.total}`;generate.disabled=true;stop.classList.remove('hidden');stop.disabled=false;
- }else{generate.textContent=`Сгенерировать всем без резюме · ${missing}`;generate.disabled=Boolean(activeJob||generationStarting||notionBatch?.running||!missing);stop.classList.add('hidden');}
+  const activeButton=generationBatch.mode==='not_ready'?generateNotReady:generate;
+  activeButton.textContent=`Генерация · ${current}/${generationBatch.total}`;
+  generate.disabled=true;generateNotReady.disabled=true;stop.classList.remove('hidden');stop.disabled=false;
+ }else{generate.disabled=Boolean(activeJob||generationStarting||notionBatch?.running||!missing);generateNotReady.disabled=Boolean(activeJob||generationStarting||notionBatch?.running||!notReady);stop.classList.add('hidden');}
  if(notionBatch?.running){notion.textContent=`Добавляем в Notion · ${notionBatch.completed+notionBatch.failed+1}/${notionBatch.total}`;notion.disabled=true;}
  else{notion.textContent=`Добавить готовые в Notion · ${pending}`;notion.disabled=Boolean(activeJob||generationStarting||generationBatch?.running||!pending);}
  status.textContent=generationBatch?.message||notionBatch?.message||'';
@@ -346,23 +350,24 @@ async function startNextGenerationBatch(){
  if(!generationBatch?.running||activeJob||generationStarting)return;
  while(generationBatch.queue.length){
   const id=generationBatch.queue.shift(),student=students.find(s=>s.id===id);
-  if(!student||student.result?.resume_text?.trim()){generationBatch.completed++;continue;}
+  if(!batchResumeEligible(student,generationBatch.mode||'missing')){generationBatch.completed++;continue;}
   generationBatch.currentId=id;generationBatch.message=`Генерируем: ${student.name||student.telegram||'ученик'}`;saveGenerationBatch();renderBatchControls();
   generationStarting=true;startingStudentId=id;showJob(`Запускаем ${providerName(generationSettings?.provider)}…`,false,id);
   try{
    const snapshot=structuredClone(student),j=await api('/api/generate',{method:'POST',body:JSON.stringify(snapshot)});
    activeJob={id:j.id,studentId:id,kind:'resume',provider:j.provider,providerName:j.providerName,signature:signature(snapshot),batch:true};
    sessionStorage.setItem('rezumator:job',JSON.stringify(activeJob));renderJobStatus();renderReadiness();setTimeout(pollJob,1200);return;
-  }catch(e){showJob(e.message,true,id);generationBatch.failed++;generationBatch.currentId=null;generationBatch.message=`Не удалось запустить ${student.name||student.telegram||'ученика'}`;}
-  finally{generationStarting=false;startingStudentId=null;renderReadiness();}
+  }catch(e){showJob(e.message,true,id);generationBatch.running=false;generationBatch.queue.unshift(id);generationBatch.currentId=null;generationBatch.message=`Очередь остановлена: ${e.message} Генерация не запущена; осталось анкет: ${generationBatch.queue.length}.`;saveGenerationBatch();renderBatchControls();toast(generationBatch.message);return;}
+  finally{generationStarting=false;startingStudentId=null;renderReadiness();renderBatchControls();}
  }
  generationBatch.running=false;generationBatch.message=`Массовая генерация завершена: ${generationBatch.completed} готово${generationBatch.failed?`, ${generationBatch.failed} с ошибкой`:''}.`;saveGenerationBatch();renderBatchControls();toast(generationBatch.message);
 }
-async function startGenerationBatch(){
- if(activeJob||generationStarting||notionBatch?.running)return;
+async function startGenerationBatch(mode='missing'){
+ if(activeJob||generationStarting||generationBatch?.running||notionBatch?.running)return;
  await save();if(saving||studentChanges(savedStudents,students).length){toast('Сначала дождитесь сохранения анкет.');return;}
- const queue=studentsMissingResume(students).map(s=>s.id);if(!queue.length){toast('У всех заполненных учеников уже есть резюме.');renderBatchControls();return;}
- generationBatch={running:true,queue,total:queue.length,completed:0,failed:0,currentId:null,message:`В очереди: ${queue.length}`};saveGenerationBatch();renderBatchControls();startNextGenerationBatch();
+ const queue=(mode==='not_ready'?studentsWithoutReadyResume(students):studentsMissingResume(students)).map(s=>s.id);
+ if(!queue.length){toast(mode==='not_ready'?'У всех заполненных учеников есть галочка «Резюме готово».':'У всех заполненных учеников уже есть резюме.');renderBatchControls();return;}
+ generationBatch={running:true,mode,queue,total:queue.length,completed:0,failed:0,currentId:null,message:`В очереди: ${queue.length}`};saveGenerationBatch();renderBatchControls();startNextGenerationBatch();
 }
 async function stopGenerationBatch(){
  if(!generationBatch?.running)return;
@@ -398,7 +403,8 @@ async function startNotionBatch(){
  }
  notionBatch.running=false;notionBatch.message=`Экспорт в Notion завершён: ${notionBatch.completed} создано${notionBatch.failed?`, ${notionBatch.failed} не удалось`:''}. Существующие страницы пропущены.`;renderBatchControls();renderNotion();toast(notionBatch.message);
 }
-if($('#generateMissing'))$('#generateMissing').onclick=startGenerationBatch;
+if($('#generateMissing'))$('#generateMissing').onclick=()=>startGenerationBatch('missing');
+if($('#generateNotReady'))$('#generateNotReady').onclick=()=>startGenerationBatch('not_ready');
 if($('#stopGenerationBatch'))$('#stopGenerationBatch').onclick=stopGenerationBatch;
 if($('#exportAllNotion'))$('#exportAllNotion').onclick=startNotionBatch;
 

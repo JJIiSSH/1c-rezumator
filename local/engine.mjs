@@ -74,7 +74,17 @@ export function buildPrompt(s,rules){
  },null,2);
 }
 export function normalizeResumeText(text){
- return text.replace(/[\u2012-\u2015]/g,'-').replace(/^(\s*)[•●▪◦]\s*/gm,'$1- ');
+ const normalized=text.replace(/[\u2012-\u2015]/g,'-').replace(/^(\s*)[•●▪◦]\s*/gm,'$1- ');
+ let desired=false;
+ return normalized.split('\n').flatMap(line=>{
+  const trimmed=line.trim();
+  if(/^Желаемая должность(?: и зарплата)?$/i.test(trimmed))desired=true;
+  else if(/^(?:Опыт работы|Образование|Навыки|Дополнительная информация|Обо мне)(?:\s|$)/i.test(trimmed))desired=false;
+  if(/^(?:(?:желаемая|ожидаемая)\s+(?:зарплата|з\/п|оклад)|зарплатные ожидания|ожидания по зарплате|(?:зарплата|з\/п|оклад)\s*:)/i.test(trimmed))return [];
+  if(desired&&/^(?:от\s+|до\s+)?\d[\d\s.,]*(?:₽|руб(?:лей|ля|\.)?)(?:\s+(?:на руки|gross|net))?$/i.test(trimmed))return [];
+  if(desired)line=line.replace(/\s*(?:[,;]|\s-\s)\s*(?:от\s+|до\s+)?\d[\d\s.,]*(?:₽|руб(?:лей|ля|\.)?)(?:\s+(?:на руки|gross|net))?$/i,'');
+  return [line];
+ }).join('\n');
 }
 export function publicResumeDisclosure(text){
  const match=String(text||'').match(/(?:опыт\p{L}*[^.\n]{0,50}адаптир\p{L}*|адаптир\p{L}*[^.\n]{0,40}(?:для|под)\s+1[сc]|адаптац\p{L}*\s+(?:опыт\p{L}*|резюме|задач\p{L}*|стек\p{L}*)|не[- ]?1[сc]\p{L}*|не\s+из\s+1[сc]|исходн\p{L}*\s+(?:опыт|стек)|перенос\p{L}*\s+опыт\p{L}*\s+(?:из|в))/iu);

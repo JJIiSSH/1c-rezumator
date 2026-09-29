@@ -4,6 +4,6 @@
   "type": "module",
   "scripts": {
     "start": "node server.mjs",
-    "test": "node --test test.mjs test-legend.mjs test-status.mjs test-notion.mjs test-sync.mjs test-sync-http.mjs test-job-status.mjs test-drive.mjs test-model-settings.mjs test-experience.mjs test-batch.mjs test-connections.mjs test-connections-http.mjs test-provider-http.mjs"
+    "test": "node --test test.mjs test-legend.mjs test-status.mjs test-notion.mjs test-sync.mjs test-sync-http.mjs test-job-status.mjs test-drive.mjs test-model-settings.mjs test-runtime-paths.mjs test-experience.mjs test-batch.mjs test-connections.mjs test-connections-http.mjs test-provider-http.mjs"
   }
 }

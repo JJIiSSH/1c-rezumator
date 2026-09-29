@@ -11,7 +11,7 @@ export class NotionClient {
  }
  async startTransport(){
   const child=spawn(this.codex,['app-server',...(this.env?.REZUMATOR_DESKTOP==='1'?['-c','features.apps=true','-c','features.plugins=true']:[])],{cwd:this.cwd,env:this.env,stdio:['pipe','pipe','pipe']});this.child=child;
-  const fail=()=>{if(this.child!==child)return;this.threadId=null;this.connection=null;for(const p of this.pending.values()){clearTimeout(p.timer);p.reject(new Error('Связь с подключением Codex прервалась.'));}this.pending.clear();};
+  const fail=error=>{if(this.child!==child)return;this.threadId=null;this.connection=null;for(const p of this.pending.values()){clearTimeout(p.timer);const reason=new Error(error?.code==='ENOENT'?'Не найден исполняемый файл Codex. Проверьте установку приложения Codex.':'Связь с подключением Codex прервалась.');reason.code=error?.code==='ENOENT'?'CODEX_UNAVAILABLE':'CODEX_DISCONNECTED';p.reject(reason);}this.pending.clear();};
   child.on('error',fail);child.on('close',fail);child.stdin.on('error',fail);child.stderr.on('data',()=>{});
   createInterface({input:child.stdout}).on('line',line=>{
    let m;try{m=JSON.parse(line);}catch{return;}
@@ -77,6 +77,7 @@ export class NotionClient {
    }
    if((result.async_task||result).status!=='succeeded')throw new Error('Обновление ещё не подтверждено. Проверьте страницу Notion перед повтором.');
   }
+  unwrapNotion(await this.rawCall('notion.notion-update-page',{page_id:pageId,command:'update_properties',properties:{title:page.properties.title},allow_async:false}));
   const saved=await this.fetchPage(pageId);
   if(saved.metadata?.type!=='page'||typeof saved.text!=='string')throw new Error('Не удалось проверить обновлённую страницу Notion.');
   return saved;

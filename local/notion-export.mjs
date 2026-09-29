@@ -92,7 +92,7 @@ export class NotionExports {
    await writeFile(backup,JSON.stringify(previous,null,2),{mode:0o600,flag:'wx'});
    entry.message='Обновляем существующую страницу в Notion…';
    await this.client.updatePage(entry.pageId,page);
-   Object.assign(entry,{status:'done',message:'Страница обновлена в Notion.',updatedAt:new Date().toISOString(),contentHash:createHash('sha256').update(JSON.stringify(page)).digest('hex')});
+   Object.assign(entry,{status:'done',title:page.properties.title,message:'Страница обновлена в Notion.',updatedAt:new Date().toISOString(),contentHash:createHash('sha256').update(JSON.stringify(page)).digest('hex')});
   }catch(error){entry.status='update_error';entry.message=error.message+' Ссылка сохранена. Можно повторить обновление той же страницы.';}
   finally{try{await this.save();}catch{entry.message+=' Не удалось сохранить статус на компьютере.';}this.busy=false;}
  }

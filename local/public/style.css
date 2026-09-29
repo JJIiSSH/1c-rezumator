@@ -49,7 +49,7 @@
 
 .rail-actions {margin:16px 0 10px}
 .rail-actions .add-student {width:calc(100% - 16px);margin:5px 8px;padding:10px 8px;line-height:1.35}
-.rail-actions #generateMissing,.rail-actions #exportAllNotion {border-style:solid;background:#fafbfc}
+.rail-actions #generateMissing,.rail-actions #generateNotReady,.rail-actions #exportAllNotion {border-style:solid;background:#fafbfc}
 .rail-actions .stop-batch {border-color:#bd3d2d;background:#fff3f1;color:#a83224;font-weight:700}
 .rail-actions .stop-batch.hidden {display:none}
 .batch-status,.drive-status {margin:5px 10px;color:#7b8490;font-size:11px;line-height:1.45}

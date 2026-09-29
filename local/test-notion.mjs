@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import {mkdtemp,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import path from 'node:path';
-import {NotionExports,notionPage,createdPage} from './notion-export.mjs';
+import {NotionExports,notionPage,notionDate,createdPage} from './notion-export.mjs';
+import {NotionClient} from './notion-client.mjs';
 
 const student={id:'s1',jobs:[],name:'Тест',urgent:true,resumeReady:false,resume:'Исходный PDF не экспортируется',result:{resume_text:'Тест\nМосква\nОпыт работы\nПрограммист 1С\n- Отчёт <page url="https://example.com">',summary:'Черновик',checks:[],questions:[],changes:['Предложенная метрика: 10 минут']},legend:{legend_text:'Текущая легенда',summary:'Рассказ',checks:[],questions:[],changes:[]}};
 const reply={pages:[{id:'123',url:'https://www.notion.so/123'}]};
@@ -69,10 +70,22 @@ test('Обновление использует прежний ID, сохран�
  const changed=structuredClone(student);changed.result.resume_text='Исправленное резюме';changed.legend.legend_text='Исправленная легенда';
  const entry=await service.update(changed);assert.equal(entry.status,'updating');assert.equal(await service.update(changed),entry);
  for(let i=0;!finish&&i<100;i++)await new Promise(r=>setTimeout(r,5));assert.ok(finish);finish();await settled(service);
- assert.equal(updates,1);assert.equal(entry.status,'done');assert.equal(entry.url,reply.pages[0].url);assert.notEqual(entry.contentHash,'old');assert.ok(entry.updatedAt);
+ assert.equal(updates,1);assert.equal(entry.status,'done');assert.equal(entry.title,notionPage(changed).properties.title);assert.equal(entry.url,reply.pages[0].url);assert.notEqual(entry.contentHash,'old');assert.ok(entry.updatedAt);
  const backups=path.join(path.dirname(service.file),'notion-backups');const files=await readdir(backups);assert.equal(files.length,1);assert.deepEqual(JSON.parse(await readFile(path.join(backups,files[0]),'utf8')),fetched);
  assert.equal(changed.resumeReady,false);assert.equal(changed.urgent,true);
  const restored=new NotionExports({file:service.file,client});await restored.init();assert.equal(restored.entries.s1.url,entry.url);assert.equal(restored.entries.s1.contentHash,entry.contentHash);
+});
+test('При обновлении Notion меняется и заголовок с текущей датой',async()=>{
+ const calls=[];const client=new NotionClient({});
+ client.connect=async()=>{};
+ client.rawCall=async(tool,args)=>{calls.push({tool,args});return {structuredContent:{}};};
+ client.fetchPage=async()=>({metadata:{type:'page'},text:'Обновлённое резюме'});
+ const page=notionPage(student);
+ await client.updatePage('123',page);
+ assert.deepEqual(calls.map(c=>c.args.command),['replace_content','update_properties']);
+ assert.deepEqual(calls[1].args.properties,{title:page.properties.title});
+ assert.equal(calls[1].args.page_id,'123');
+ assert.equal(notionDate(new Date('2026-09-29T21:30:00Z')),'30.09');
 });
 test('Ошибка обновления сохраняет ссылку и хеш, повтор обновляет ту же страницу',async t=>{
  let updates=0,fail=true;const client={connect:async()=>{},fetchPage:async()=>({metadata:{type:'page'},text:'Старая версия'}),updatePage:async()=>{updates++;if(fail)throw Error('Нет связи');},createPage:()=>assert.fail('Не создавать дубль')};

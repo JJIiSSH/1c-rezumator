@@ -7,6 +7,7 @@ import {DriveClient} from './drive-client.mjs';
 import {mergeDriveRows,sheetUrl} from './drive-import.mjs';
 import {applyStudentChanges} from './state-sync.mjs';
 import {NotionClient} from './notion-client.mjs';
+import {codexExecutable} from './runtime-paths.mjs';
 import {NotionExports,notionWorkspace} from './notion-export.mjs';
 import http from 'node:http';
 import {readFile,writeFile,mkdir,rename,mkdtemp,rm} from 'node:fs/promises';
@@ -30,7 +31,7 @@ const rulesVersion=rules=>createHash('sha256').update(rules).digest('hex').slice
 const defaults={name:'',telegram:'',age:'',github:'',location:'РФ',urgent:false,resumeReady:false,sourceUrl:'',project:'',configurations:'',tasks:'',complex:'',resume:'',pdfName:'',title:'Программист 1С',track:'Универсальный профиль',targetExperienceYears:'',notes:'',showAge:false,showGithub:true,fillMetrics:true,metrics:[],jobs:[],result:null,resultSignature:'',legend:null,legendSignature:'',legendNotes:''};
 let state;
 try{state=JSON.parse(await readFile(path.join(dataDir,'students.json'),'utf8'));}catch(e){if(e.code!=='ENOENT')throw e;state=(JSON.parse(await readFile(path.join(root,'seed.json'),'utf8'))).map(s=>({...defaults,...s}));}
-const codex=process.env.REZUMATOR_CODEX||(existsSync('/Applications/ChatGPT.app/Contents/Resources/codex')?'/Applications/ChatGPT.app/Contents/Resources/codex':'codex');
+const codex=codexExecutable();
 const claude=process.env.REZUMATOR_CLAUDE||'claude';
 const python=process.env.REZUMATOR_PYTHON||'python3';
 const env={...process.env};for(const k of ['OPENAI_API_KEY','CODEX_API_KEY','OPENAI_BASE_URL','CODEX_THREAD_ID','CODEX_SESSION_ID','ANTHROPIC_API_KEY','ANTHROPIC_AUTH_TOKEN','CLAUDE_CODE_OAUTH_TOKEN','ANTHROPIC_BASE_URL','CLAUDE_CODE_USE_BEDROCK','CLAUDE_CODE_USE_VERTEX','CLAUDE_CODE_USE_FOUNDRY'])delete env[k];
