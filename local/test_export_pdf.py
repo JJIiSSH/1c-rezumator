@@ -54,4 +54,22 @@ class ExportPDFTests(unittest.TestCase):
             self.assertEqual(content.count('Программист, разработчик'),1)
             self.assertIn('Системный аналитик',content)
 
+    def test_work_preferences_fill_missing_lines_without_replacing_edits(self):
+        text='Желаемая должность и зарплата\nПрограммист 1С\nТип занятости: проектная работа\nЖелательное время в пути до работы: не имеет значения\nОпыт работы\nКомпания\nПрограммист 1С\nЯнварь 2023 - настоящее время\n- Разработка отчётов.'
+        data=render(text,{},'2026-09-29')
+        with pdfplumber.open(io.BytesIO(data)) as pdf:
+            content='\n'.join(p.extract_text() or '' for p in pdf.pages)
+            self.assertIn('Тип занятости: проектная работа',content)
+            self.assertIn('Желательное время в пути до работы: не имеет значения',content)
+            self.assertIn('График работы: полный день, гибкий график, удаленная работа',content)
+            self.assertNotIn('Занятость: полная занятость',content)
+            self.assertNotIn('не более часа',content)
+
+    def test_work_preferences_default_without_source_lines(self):
+        data=render('Желаемая должность и зарплата\nПрограммист 1С',{},'2026-09-29')
+        with pdfplumber.open(io.BytesIO(data)) as pdf:
+            content='\n'.join(p.extract_text() or '' for p in pdf.pages)
+            for line in ('Занятость: полная занятость','График работы: полный день, гибкий график, удаленная работа','Желательное время в пути до работы: не более часа'):
+                self.assertIn(line,content)
+
 if __name__=='__main__':unittest.main()

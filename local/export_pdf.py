@@ -225,6 +225,13 @@ def render(text, candidate=None, updated_at=None):
     details=list(desired[1:])
     if not any(re.match(r'^специализаци[яи](?:\s*:|$)',line,re.I) for line in details):
         details=['Специализации:','- Программист, разработчик']+details
+    work_preferences=(
+        (r'^(?:занятость|тип занятости)\s*:', 'Занятость: полная занятость'),
+        (r'^график работы\s*:', 'График работы: полный день, гибкий график, удаленная работа'),
+        (r'^желательное время в пути до работы\s*:', 'Желательное время в пути до работы: не более часа'),
+    )
+    for pattern,default in work_preferences:
+        if not any(re.match(pattern,line,re.I) for line in details):details.append(default)
     for line in details: story.append(para(line))
     if sections.get('experience'):
         total=total_duration(jobs,today)
