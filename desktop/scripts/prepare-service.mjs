@@ -4,7 +4,7 @@ import {fileURLToPath} from 'node:url';
 const desktop=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 const local=path.join(desktop,'../local'),service=path.join(desktop,'stage/service');
 // An allowlist is deliberate: .data, seed.json, backups and credentials cannot leak.
-const files=['server.mjs','runtime-paths.mjs','engine.mjs','batch-operations.mjs','state-sync.mjs','model-settings.mjs','account-client.mjs','claude-client.mjs','desktop-settings.mjs','connection-wizard.mjs','notion-client.mjs','notion-export.mjs','drive-client.mjs','drive-import.mjs','schema.json','legend-schema.json','public','prompts'];
+const files=['server.mjs','runtime-paths.mjs','engine.mjs','legend-plan.mjs','legend-format.mjs','legend-content.mjs','legend-map.mjs','legend-map-export.mjs','material-workflow.mjs','resume-chronology.mjs','model-runner.mjs','batch-operations.mjs','state-sync.mjs','model-settings.mjs','account-client.mjs','claude-client.mjs','desktop-settings.mjs','connection-wizard.mjs','notion-client.mjs','notion-export.mjs','drive-client.mjs','drive-import.mjs','schema.json','legend-schema.json','legend-plan-schema.json','public','prompts'];
 await rm(service,{recursive:true,force:true});await mkdir(service,{recursive:true});
 for(const file of files)await cp(path.join(local,file),path.join(service,file),{recursive:true});
 await writeFile(path.join(service,'seed.json'),'[]\n');

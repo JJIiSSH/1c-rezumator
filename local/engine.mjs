@@ -1,3 +1,4 @@
+import {validateLegendPlan} from './legend-plan.mjs';
 export function useful(v){return typeof v==='string'&&v.trim().length>1&&!/^(нет[у]?|ничего|опыта нет|[-—.\s]+)$/i.test(v.trim());}
 function stableOffset(id){
  let hash=2166136261;
@@ -16,7 +17,7 @@ export function experienceLabel(months){
 }
 export function experienceSettings(s){
  const raw=s.targetExperienceYears;
- if(raw==null||typeof raw==='string'&&!raw.trim()){
+ if(raw==null||typeof raw==='string'&&!raw.trim()||['string','number'].includes(typeof raw)&&/^0+(?:[.,]0*)?$/.test(String(raw).trim())){
   const offset=stableOffset(s.id);
   const age=Number(String(s.age??'').trim());
   const target=Number.isInteger(age)&&age>=18&&age<=22?48+offset%2:Number.isInteger(age)&&age>=23&&age<=25?48+offset%4:48+offset;
@@ -70,7 +71,7 @@ export function buildPrompt(s,rules){
  experience:experienceSettings(s),
  metrics:metricConfig.metrics,
  jobs:s.jobs.filter(j=>Object.values(j).some(v=>typeof v==='string'&&v.trim())),
- as_of_date:new Date().toISOString().slice(0,10)
+ as_of_date:new Intl.DateTimeFormat('sv-SE',{timeZone:'Europe/Moscow'}).format(new Date())
  },null,2);
 }
 export function normalizeResumeText(text){
@@ -113,9 +114,21 @@ export function buildLegendPrompt(s,rules){
 export function parseLegendResult(text,{allowEmpty=false}={}){
  const clean=text.trim().replace(/^```(?:json)?\s*/,'').replace(/\s*```$/,'');
  const value=JSON.parse(clean);
+ if(value.case_plan!==undefined)validateLegendPlan(value.case_plan);
  if(typeof value?.legend_text!=='string'||(!allowEmpty&&!value.legend_text.trim())||value.legend_text.length>120000)throw new Error('Модель вернула неполную легенду. Повторите генерацию.');
  const {resume_text,...rest}=parseResult(JSON.stringify({...value,resume_text:value.legend_text}),{allowMetaDisclosure:true});
  return {...rest,legend_text:resume_text};
+}
+
+export function buildLegendPlanPrompt(s,rules){
+ return buildLegendPrompt(s,rules)+'\n\nЭТАП СЕРВИСА: 1 из 2. Верни только JSON паспорта и карточек по заданной схеме. Пока не пиши legend_text или готовый рассказ. Поля карточек заполняй компактно, обычно 1-2 предложения на поле. Каждому работодателю и кейсу присвой уникальный id; employer_id и case_id должны ссылаться на эти id. Подготовь 3-4 кейса по STAR с личным вкладом и бизнес-результатом, соблюдая режим метрик, и 2-3 разных факапа исключительно в тестовых средах. Если в legend_notes есть вакансия, выбери релевантные кейсы из current_resume; требования вакансии не подтверждают опыт. Все достроенные детали включи в proposals с работодателем; существенные неизвестные в questions.';
+}
+
+export function buildLegendReviewPrompt(s,rules,plan){
+ validateLegendPlan(plan);
+ const input=JSON.parse(buildLegendPrompt(s,'').split('(JSON):\n')[1]);
+ const {candidate,jobs,...source}=input;
+ return rules+'\n\nДАННЫЕ ДЛЯ ПРОВЕРКИ ЛЕГЕНДЫ (JSON):\n'+JSON.stringify({...source,case_plan:plan},null,2)+'\n\nЭТАП СЕРВИСА: 2 из 2. Проверь карточки относительно current_resume и правил; это предложения первого прохода, не подтверждённые факты. Исправь несогласованность, лишнюю конкретику и необоснованные гарантии. Не добавляй компании, даты или новые проекты независимо от резюме. Верни только JSON финального результата: legend_text с готовым материалом, summary, checks, questions, changes и case_plan с проверенными исправленными карточками. Содержание рассказа и ответов должно совпадать с исправленным case_plan. Проверь основной рассказ примерно на 10 минут, STAR, бизнес-эффект и акценты под вакансию из legend_notes, если она дана. Среди 8-10 вопросов обязательны причина ухода и ожидания от новой работы; неизвестные личные мотивы раскрой через 2-3 готовых альтернативы без выдуманной биографии. В legend_text не оставляй «нужно уточнить», ссылки на исходник, инструкции куратора и другие служебные оговорки. Добавь слои архитектуры проектов и выбора инструментов; разбей кейсы и факапы на короткие подписанные блоки. Перенеси происхождение предложений в changes/checks; отдельно проверь 2-3 факапа только в тесте. Оценку подачи по тексту и план репетиции не добавляй. Служебные замечания не включай в legend_text.';
 }
 export function parseResult(text,{allowMetaDisclosure=false}={}){
  const clean=text.trim().replace(/^```(?:json)?\s*/,'').replace(/\s*```$/,'');

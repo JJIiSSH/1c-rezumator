@@ -15,7 +15,10 @@ if(args[0]==='auth'&&args[1]==='status'){console.log(JSON.stringify({loggedIn:tr
 if(args[0]==='auth'&&args[1]==='logout')process.exit(0);
 let prompt='';process.stdin.on('data',c=>prompt+=c);process.stdin.on('end',()=>{
  fs.writeFileSync(process.env.CAPTURE,JSON.stringify({args,promptLength:prompt.length,hasApiKey:!!process.env.ANTHROPIC_API_KEY}));
- console.log(JSON.stringify({structured_output:{resume_text:'Программист 1С\\nМосква',summary:'Готово',checks:[],questions:[],changes:[]},usage:{input_tokens:10,output_tokens:20}}));
+ const data=JSON.parse(prompt.split('(JSON):\\n')[1]),date=data.as_of_date.split('-').map(Number),now=date[0]*12+date[1]-1;
+ const stamp=n=>Math.floor(n/12)+'-'+String(n%12+1).padStart(2,'0');
+ const resume_text='Программист 1С\\nМосква\\nОпыт работы\\nКомпания А\\n'+stamp(now-23)+' - по настоящее время\\nКомпания Б\\n'+stamp(now-data.experience.target_months+1)+' - '+stamp(now-24);
+ console.log(JSON.stringify({structured_output:{resume_text,summary:'Готово',checks:[],questions:[],changes:[]},usage:{input_tokens:10,output_tokens:20}}));
 });
 `,{mode:0o700});
  const child=spawn(process.execPath,['server.mjs'],{cwd:new URL('.',import.meta.url),env:{...process.env,ANTHROPIC_API_KEY:'must-not-leak',REZUMATOR_PORT:'0',REZUMATOR_DESKTOP:'1',REZUMATOR_DATA_DIR:data,REZUMATOR_CODEX:fakeCodex,REZUMATOR_CLAUDE:fakeClaude,CAPTURE:capture},stdio:['ignore','pipe','pipe']});
@@ -31,6 +34,6 @@ let prompt='';process.stdin.on('data',c=>prompt+=c);process.stdin.on('end',()=>{
  response=await request('/api/status');assert.equal(response.data.connected,true);assert.equal(response.data.message,'Подписка Claude');
  response=await request('/api/generate',{id:'student',name:'Тест',jobs:[],fillMetrics:false});assert.equal(response.status,202,JSON.stringify(response.data));
  let job=response.data;for(let i=0;i<100&&job.status==='running';i++){await new Promise(r=>setTimeout(r,25));job=(await request('/api/jobs/'+job.id)).data;}
- assert.equal(job.status,'done',JSON.stringify(job));assert.equal(job.result.provider,'anthropic');assert.equal(job.result.resume_text,'Программист 1С\nМосква');
+ assert.equal(job.status,'done',JSON.stringify(job));assert.equal(job.result.provider,'anthropic');assert.match(job.result.resume_text,/Программист 1С\nМосква\nОпыт работы: 4/);assert.match(job.result.resume_text,/по настоящее время/);
  const call=JSON.parse(await readFile(capture,'utf8'));assert.equal(call.hasApiKey,false);assert.ok(call.promptLength>100);assert.ok(call.args.includes('--restricted'));assert.equal(call.args[call.args.indexOf('--tools')+1],'');assert.ok(call.args.includes('--json-schema'));
 });

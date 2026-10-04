@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 import {mkdtemp,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import path from 'node:path';
-import {NotionExports,notionPage,notionDate,createdPage} from './notion-export.mjs';
-import {NotionClient} from './notion-client.mjs';
+import {NotionExports,notionPage,notionDate,createdPage,protectNotionLegend} from './notion-export.mjs';
+import {NotionClient,unwrapNotion} from './notion-client.mjs';
 
 const student={id:'s1',jobs:[],name:'Тест',urgent:true,resumeReady:false,resume:'Исходный PDF не экспортируется',result:{resume_text:'Тест\nМосква\nОпыт работы\nПрограммист 1С\n- Отчёт <page url="https://example.com">',summary:'Черновик',checks:[],questions:[],changes:['Предложенная метрика: 10 минут']},legend:{legend_text:'Текущая легенда',summary:'Рассказ',checks:[],questions:[],changes:[]}};
 const reply={pages:[{id:'123',url:'https://www.notion.so/123'}]};
@@ -16,7 +16,37 @@ test('Новые страницы создаются внутри одной п�
  const calls=[];const client={connect:async()=>{},createPage:async(page,parent)=>{calls.push({page,parent});return calls.length===1?{pages:[{id:'folder-1',url:'https://www.notion.so/folder-1'}]}:calls.length===2?{pages:[{id:'student-1',url:'https://www.notion.so/student-1'}]}:reply;},insertPageContent:async()=>{}};
  const service=new NotionExports({file:path.join(dir,'exports.json'),client});await service.init();await service.start(student);await settled(service);
  assert.equal(calls.length,3);assert.equal(calls[0].page.properties.title,'Резюме учеников');assert.deepEqual(calls[1].parent,{page_id:'folder-1'});assert.deepEqual(calls[2].parent,{page_id:'student-1'});assert.equal(service.container.pageId,'folder-1');assert.equal(service.entries.s1.hubPageId,'student-1');
+ assert.equal(calls[1].page.icon,'💻');
  const restored=new NotionExports({file:service.file,client});await restored.init();assert.equal(restored.container.pageId,'folder-1');
+});
+
+test('Явный отказ Notion в параметрах отличается от ошибки с неизвестным результатом',()=>{
+ for(const result of [
+  {isError:true,structuredContent:{error_code:'INVALID_ARGUMENT'}},
+  {isError:true,content:[{type:'text',text:JSON.stringify({code:'validation_error',status:400})}]},
+  {isError:true,content:[{type:'text',text:JSON.stringify({additional_data:{tool_error_class:'validation',tool_error_code:'invalid_input'}})}]}
+ ])assert.throws(()=>unwrapNotion(result),e=>e.creationRejected===true);
+ for(const result of [{isError:true},{isError:true,content:[{type:'text',text:JSON.stringify({code:'internal_server_error',status:500})}]}])assert.throws(()=>unwrapNotion(result),e=>e.creationRejected===false);
+});
+
+test('После отказа дочерней страницы повтор использует сохранённую страницу ученика',async t=>{
+ let calls=0,reject=true;const parents=[];
+ const client={connect:async()=>{},createPage:async(page,parent)=>{
+  calls++;parents.push(parent.page_id);
+  if(parent.page_id==='folder-1')return {pages:[{id:'hub-1',url:'https://www.notion.so/hub-1'}]};
+  if(reject)unwrapNotion({isError:true,structuredContent:{error_code:'INVALID_ARGUMENT'}});
+  return reply;
+ },insertPageContent:async()=>{}};
+ const service=await fixture(t,client);await service.start(student);await settled(service);
+ assert.equal(service.entries.s1.status,'error');assert.equal(service.entries.s1.hubPageId,'hub-1');assert.match(service.entries.s1.message,/параметры/);
+ const restored=new NotionExports({file:service.file,client});await restored.init();reject=false;
+ await restored.start(student);await settled(restored);
+ assert.equal(restored.entries.s1.status,'done');assert.equal(calls,3);assert.deepEqual(parents,['folder-1','hub-1','hub-1']);
+});
+
+test('Отказ параметров папки разрешает исправленный повтор без блокировки',async t=>{
+ const service=await fixture(t,{connect:async()=>{},createPage:async()=>unwrapNotion({isError:true,structuredContent:{error_code:'INVALID_ARGUMENT'}})});service.container=null;
+ await service.start(student);await settled(service);assert.equal(service.container.status,'error');assert.equal(service.entries.s1.status,'error');
 });
 
 test('Notion получает только текст редактора и легенду, сохраняя проверки локально',()=>{
@@ -100,4 +130,24 @@ test('Нельзя обновить непрочитанную страницу;
  service.entries.s1={studentId:'s1',...createdPage(reply),status:'updating',contentHash:'old'};await service.save();
  const restored=new NotionExports({file:service.file,client:service.client});await restored.init();assert.equal(restored.entries.s1.status,'update_error');
  await restored.update(student);await settled(restored);assert.equal(restored.entries.s1.status,'update_error');assert.equal(restored.entries.s1.pageId,'123');assert.equal(restored.entries.s1.contentHash,'old');
+});
+
+test('Авторская легенда с таблицами и callout сохраняется целиком; меняется только резюме',async t=>{
+ const manual='## Легенда {color="green_bg"}\n<callout icon="🧭">\n\tМой авторский рассказ\n</callout>\n<columns>Ручные колонки</columns>';
+ const previous={metadata:{type:'page'},text:'<page>\n<content>\n# Резюме {color="green_bg"}\nСтарое резюме\n'+manual+'\n</content>\n</page>'};
+ const page=protectNotionLegend(notionPage(student),previous);assert.ok(page.legendPreserved);assert.ok(page.content.endsWith(manual));assert.ok(!page.content.includes(student.legend.legend_text));
+ assert.equal(page.contentUpdates.length,1);assert.ok(!page.contentUpdates[0].old_str.includes('Мой авторский рассказ'));assert.ok(!page.contentUpdates[0].new_str.includes('Текущая легенда'));
+ let written;const service=await fixture(t,{connect:async()=>{},fetchPage:async()=>previous,updatePage:async(id,p)=>{written=p;}});service.entries.s1={studentId:'s1',...createdPage(reply),status:'done'};
+ await service.update(student);await settled(service);assert.equal(written.content,page.content);assert.match(service.entries.s1.message,/Легенда.*сохранена/);
+ await service.update(student,{replaceLegend:true});await settled(service);assert.ok(written.content.includes(student.legend.legend_text));assert.ok(!written.contentUpdates);
+ await assert.rejects(service.update({...student,legend:null},{replaceLegend:true}),/Сначала создайте легенду/);
+});
+test('При сохранении авторской легенды клиент использует точечную замену',async()=>{
+ const client=new NotionClient({}),calls=[];client.connect=async()=>{};client.rawCall=async(tool,args)=>{calls.push(args);return {structuredContent:{}};};client.fetchPage=async()=>({metadata:{type:'page'},text:'Проверено'});
+ const page=protectNotionLegend(notionPage(student),{text:'# Резюме\nСтарое\n## Авторская легенда\nРучной текст'});
+ await client.updatePage('123',page);assert.equal(calls[0].command,'update_content');assert.deepEqual(calls[0].content_updates,page.contentUpdates);assert.ok(!calls[0].new_str);assert.equal(calls[1].command,'update_properties');
+});
+test('Обрезанная страница не перезаписывается',async t=>{
+ const service=await fixture(t,{connect:async()=>{},fetchPage:async()=>({metadata:{type:'page'},text:'Обрезанный текст',truncated:true}),updatePage:()=>assert.fail('Не перезаписывать')});service.entries.s1={studentId:'s1',...createdPage(reply),status:'done'};
+ await service.update(student);await settled(service);assert.equal(service.entries.s1.status,'update_error');
 });

@@ -1,3 +1,4 @@
+import {LegendMaps} from './legend-map-export.mjs';
 import {ConnectionWizard,NotionWorkspaceProbe,providerFor} from './connection-wizard.mjs';
 import {AccountClient} from './account-client.mjs';
 import {ClaudeAccountClient} from './claude-client.mjs';
@@ -16,7 +17,9 @@ import {spawn,spawnSync} from 'node:child_process';
 import {randomBytes,randomUUID,createHash} from 'node:crypto';
 import {fileURLToPath} from 'node:url';
 import path from 'node:path';
-import {buildPrompt,validateStudent,parseResult,normalizeResumeText,buildLegendPrompt,parseLegendResult} from './engine.mjs';
+import {buildPrompt,validateStudent,normalizeResumeText,buildLegendPrompt} from './engine.mjs';
+import {runModel} from './model-runner.mjs';
+import {produceMaterial} from './material-workflow.mjs';
 const root=path.dirname(fileURLToPath(import.meta.url));
 let port=Number(process.env.REZUMATOR_PORT||4317);
 let origin=`http://127.0.0.1:${port}`;
@@ -26,7 +29,8 @@ const dataDir=process.env.REZUMATOR_DATA_DIR||path.join(root,'.data');await mkdi
 const runDir=path.join(dataDir,'runs');await mkdir(runDir,{recursive:true});
 const readRules=()=>readFile(path.join(root,'prompts/rules.md'),'utf8');
 const readLegendRules=()=>readFile(path.join(root,'prompts/legend.md'),'utf8');
-const outputSchemas={resume:JSON.parse(await readFile(path.join(root,'schema.json'),'utf8')),legend:JSON.parse(await readFile(path.join(root,'legend-schema.json'),'utf8'))};
+const schemaFiles={resume:'schema.json',legend:'legend-schema.json','legend-plan':'legend-plan-schema.json'};
+const outputSchemas=Object.fromEntries(await Promise.all(Object.entries(schemaFiles).map(async([kind,file])=>[kind,JSON.parse(await readFile(path.join(root,file),'utf8'))])));
 const rulesVersion=rules=>createHash('sha256').update(rules).digest('hex').slice(0,12);
 const defaults={name:'',telegram:'',age:'',github:'',location:'РФ',urgent:false,resumeReady:false,sourceUrl:'',project:'',configurations:'',tasks:'',complex:'',resume:'',pdfName:'',title:'Программист 1С',track:'Универсальный профиль',targetExperienceYears:'',notes:'',showAge:false,showGithub:true,fillMetrics:true,metrics:[],jobs:[],result:null,resultSignature:'',legend:null,legendSignature:'',legendNotes:''};
 let state;
@@ -60,6 +64,7 @@ async function prepareNotionJournal(settings,migrate=false){
  if(desktop)await next.save();return next;
 }
 notionExports=await prepareNotionJournal(connectionSettings,true);
+const legendMaps=new LegendMaps({file:path.join(dataDir,'legend-maps.json')});await legendMaps.init();
 async function accountStatus(provider=modelSettings.snapshot().provider){
  validateProvider(provider);const status=provider==='anthropic'?claudeAccountClient.account():(desktop?accountClient.account():auth());
  return {...await status,provider,providerName:GENERATION_PROVIDERS[provider].name};
@@ -72,34 +77,22 @@ function json(res,status,data){res.writeHead(status,{'Content-Type':'application
 async function body(req,limit=2_000_000){let bytes=0;const chunks=[];for await(const c of req){bytes+=c.length;if(bytes>limit)throw new Error('Слишком большой файл или анкета');chunks.push(c);}return Buffer.concat(chunks);}
 function stop(job){if(job.child&&!job.child.killed){job.child.kill('SIGTERM');setTimeout(()=>{try{job.child.kill('SIGKILL');}catch{}},1500).unref();}job.status='cancelled';job.message='Генерация остановлена';}
 function publicJob(j){return {id:j.id,studentId:j.studentId,kind:j.kind||'resume',provider:j.provider,providerName:j.providerName,model:j.model,reasoning_effort:j.reasoning_effort,status:j.status,message:j.message,result:j.result||null,createdAt:j.createdAt};}
-function failureText(t,provider){const name=GENERATION_PROVIDERS[provider].name;if(/limit|quota|usage|429/i.test(t))return `Достигнут лимит ${name}. Дождитесь его обновления и повторите.`;if(/auth|login|401|403|token/i.test(t))return `Нужно обновить вход в ${name}.`;if(/connect|network|dns|timed? ?out|stream/i.test(t))return `Не удалось связаться с ${name}. Проверьте интернет и повторите.`;return `${name} не вернул готовое резюме. Повторите генерацию.`;}
 function generate(s,rules,kind='resume',settings){
- const {provider,model:generationModel,reasoning_effort:generationReasoning}=settings,providerName=GENERATION_PROVIDERS[provider].name;
- const isLegend=kind==='legend';
- const prompt=isLegend?buildLegendPrompt(s,rules):buildPrompt(s,rules);
- const parse=isLegend?parseLegendResult:parseResult;
- const job={id:randomUUID(),studentId:s.id,kind,provider,providerName,model:generationModel,reasoning_effort:generationReasoning,status:'running',message:isLegend?`${providerName} готовит легенду…`:`${providerName} готовит резюме…`,createdAt:Date.now()};jobs.set(job.id,job);active=job;
+ const {provider,model,reasoning_effort}=settings,providerName=GENERATION_PROVIDERS[provider].name;
+ const job={id:randomUUID(),studentId:s.id,kind,provider,providerName,model,reasoning_effort,status:'running',message:kind==='legend'?'Этап 1/2: собираем профиль и карточки кейсов…':`${providerName} готовит резюме…`,createdAt:Date.now()};jobs.set(job.id,job);active=job;
  for(const [id,j]of jobs)if(j.status!=='running'&&Date.now()-j.createdAt>3_600_000)jobs.delete(id);
- const executable=provider==='anthropic'?claude:codex;
- const args=provider==='anthropic'
-  ?['-p','--model',generationModel,'--effort',generationReasoning,'--bare','--restricted','--tools','','--disallowedTools','mcp__*','--permission-mode','dontAsk','--permission-prompts','none','--no-session-persistence','--no-chrome','--max-turns','1','--output-format','json','--json-schema',JSON.stringify(outputSchemas[kind])]
-  :['exec',...(desktop?['-c','cli_auth_credentials_store="file"']:[]),'--model',generationModel,'-c',`model_reasoning_effort="${generationReasoning}"`,'--ignore-user-config','--skip-git-repo-check','--ephemeral','--sandbox','read-only','-c','approval_policy="never"','-c','forced_login_method="chatgpt"','-c','project_doc_max_bytes=0','-c','web_search="disabled"','-c','features.shell_tool=false','-c','features.apps=false','-c','features.plugins=false','--color','never','--json','--output-schema',path.join(root,isLegend?'legend-schema.json':'schema.json'),'-'];
- const child=spawn(executable,args,{cwd:runDir,env,stdio:['pipe','pipe','pipe']});job.child=child;
- let buffer='',last='',errorText='',size=0;const timer=setTimeout(()=>{stop(job);job.status='error';job.message='Генерация заняла больше 8 минут. Повторите запрос.';},480000);
- child.stdin.on('error',()=>{});
- child.stdout.on('data',c=>{size+=c.length;if(size>2_000_000){stop(job);job.status='error';job.message=`Слишком большой ответ ${providerName}`;return;}buffer+=c.toString();if(provider==='anthropic')return;let n;while((n=buffer.indexOf('\n'))>=0){const line=buffer.slice(0,n);buffer=buffer.slice(n+1);try{const e=JSON.parse(line);if(e.type==='item.completed'&&e.item?.type==='agent_message')last=e.item.text;if(e.type==='turn.failed'||e.type==='error')errorText+=JSON.stringify(e.error||e.message||'');}catch{}}});
- child.stderr.on('data',c=>{errorText=(errorText+c.toString()).slice(-12000);});
- child.on('error',()=>{job.status='error';job.message=`Не удалось запустить ${providerName}. Проверьте установку приложения.`;});
- child.on('close',code=>{clearTimeout(timer);job.child=null;if(active===job)active=null;if(job.status!=='running')return;try{
-  let usage;
-  if(provider==='anthropic'){
-   if(code!==0)throw new Error(failureText(errorText||buffer,provider));
-   const response=JSON.parse(buffer.trim());last=response.structured_output?JSON.stringify(response.structured_output):response.result;usage=response.usage||response.modelUsage||null;
-  }
-  if(code!==0||!last)throw new Error(failureText(errorText,provider));
-  job.result={...parse(last),rules_version:rulesVersion(rules),provider,model:generationModel,reasoning_effort:generationReasoning,...(usage?{usage}: {})};job.status='done';job.message=isLegend?'Легенда готова':'Резюме готово';
- }catch(e){job.status='error';job.message=e instanceof SyntaxError?`${providerName} вернул ответ в неожиданном формате. Повторите генерацию.`:e.message;}});
- child.stdin.end(prompt);return job;
+ void (async()=>{
+  try{
+   const result=await produceMaterial({student:s,rules,kind,
+    isCancelled:()=>job.status!=='running',
+    onStage:(stage,message)=>{job.stage=stage;job.message=message;},
+    run:(step,prompt)=>runModel({job,prompt,schemaPath:path.join(root,schemaFiles[step]),schema:outputSchemas[step],settings,desktop,codex,claude,cwd:runDir,env})
+   });
+   if(job.status!=='running')return;
+   job.result={...result,rules_version:rulesVersion(rules),provider,model,reasoning_effort};job.status='done';job.message=kind==='legend'?'Легенда готова':'Резюме готово';
+  }catch(e){if(job.status==='running'){job.status='error';job.message=e instanceof SyntaxError?`${providerName} вернул ответ в неожиданном формате. Повторите генерацию.`:e.message;}}
+  finally{if(active===job)active=null;}
+ })();return job;
 }
 async function importDrive(){
  try{
@@ -182,14 +175,16 @@ const server=http.createServer(async(req,res)=>{try{
  if(url.pathname==='/api/drive/status'&&req.method==='GET'){json(res,200,driveStatus);return;}
  if(url.pathname==='/api/drive/import'&&req.method==='POST'){
   if(desktop&&!connectionSettings.sheetId)throw Error('Укажите свою Google-таблицу в разделе «Подключения» и проверьте подключение.');
-  if(connectionBusy)throw Error('Дождитесь проверки подключения.');
+  if(connectionBusy||legendMaps.busy)throw Error('Дождитесь проверки подключения.');
   if(driveStatus.status==='running'){json(res,202,driveStatus);return;}
   driveStatus={status:'running',sourceUrl:connectionSettings.sheetUrl,message:'Подключаем Google Drive…'};
   void importDrive();json(res,202,driveStatus);return;
  }
+ if(url.pathname==='/api/legend/maps'&&req.method==='GET'){json(res,200,legendMaps.status(notionExports));return;}
+ if(url.pathname==='/api/legend/maps'&&req.method==='POST'){if(connectionBusy||legendMaps.busy)throw Error('Дождитесь проверки подключения.');const {studentId}=JSON.parse((await body(req)).toString());const student=state.find(s=>s.id===studentId);if(!student)throw Error('Ученик не найден');json(res,202,await legendMaps.start(student,notionExports));return;}
  if(url.pathname==='/api/notion/status'&&req.method==='GET'){json(res,200,notionExports.status());return;}
- if(url.pathname==='/api/notion/pages'&&req.method==='POST'){if(desktop&&!connectionSettings.notionWorkspaceId)throw Error('Укажите ID своего пространства Notion в разделе «Подключения» и проверьте подключение.');if(connectionBusy)throw Error('Дождитесь проверки подключения.');const student=JSON.parse((await body(req)).toString());if(!state.some(s=>s.id===student.id))throw new Error('Ученик не найден');json(res,202,await notionExports.start(student));return;}
- if(url.pathname==='/api/notion/pages/update'&&req.method==='POST'){if(connectionBusy)throw Error('Дождитесь проверки подключения.');const student=JSON.parse((await body(req)).toString());if(!state.some(s=>s.id===student.id))throw new Error('Ученик не найден');json(res,202,await notionExports.update(student));return;}
+ if(url.pathname==='/api/notion/pages'&&req.method==='POST'){if(desktop&&!connectionSettings.notionWorkspaceId)throw Error('Укажите ID своего пространства Notion в разделе «Подключения» и проверьте подключение.');if(connectionBusy||legendMaps.busy)throw Error('Дождитесь проверки подключения.');const student=JSON.parse((await body(req)).toString());if(!state.some(s=>s.id===student.id))throw new Error('Ученик не найден');json(res,202,await notionExports.start(student));return;}
+ if(url.pathname==='/api/notion/pages/update'&&req.method==='POST'){if(connectionBusy||legendMaps.busy)throw Error('Дождитесь проверки подключения.');const student=JSON.parse((await body(req)).toString());if(!state.some(s=>s.id===student.id))throw new Error('Ученик не найден');if(student.replaceNotionLegend!==undefined&&typeof student.replaceNotionLegend!=='boolean')throw Error('Некорректный выбор замены легенды');json(res,202,await notionExports.update(student,{replaceLegend:student.replaceNotionLegend===true}));return;}
  if(url.pathname==='/api/state'&&req.method==='GET'){json(res,200,state);return;}
  if(url.pathname==='/api/state/changes'&&req.method==='POST'){
   const changes=JSON.parse((await body(req,12_000_000)).toString());
@@ -208,6 +203,7 @@ const server=http.createServer(async(req,res)=>{try{
   json(res,409,{error:'Открыта старая версия резюматора. Обновите страницу: сохранение всего списка отключено, чтобы не потерять изменения из другого окна.'});return;
  }
  if(url.pathname==='/api/prompt'&&req.method==='POST'){const s=JSON.parse((await body(req)).toString());const rules=await readRules();json(res,200,{prompt:buildPrompt(s,rules),rules_version:rulesVersion(rules)});return;}
+ if(url.pathname==='/api/legend/rules'&&req.method==='GET'){const rules=await readLegendRules();json(res,200,{prompt:rules,rules_version:rulesVersion(rules)});return;}
  if(url.pathname==='/api/legend/prompt'&&req.method==='POST'){const s=JSON.parse((await body(req)).toString());const rules=await readLegendRules();json(res,200,{prompt:buildLegendPrompt(s,rules),rules_version:rulesVersion(rules)});return;}
  if((url.pathname==='/api/generate'||url.pathname==='/api/legend/generate')&&req.method==='POST'){
   const kind=url.pathname==='/api/legend/generate'?'legend':'resume';
@@ -241,7 +237,7 @@ const server=http.createServer(async(req,res)=>{try{
    const result=JSON.parse(output);if(!result.text.trim())throw new Error('В PDF нет текстового слоя. Вставьте текст резюме вручную.');json(res,200,result);
   }finally{await rm(dir,{recursive:true,force:true});}return;
  }
- const assets={'/':'index.html','/app.js':'app.js','/style.css':'style.css','/engine.mjs':'../engine.mjs','/state-sync.mjs':'../state-sync.mjs','/batch-operations.mjs':'../batch-operations.mjs','/connections-ui.mjs':'connections-ui.mjs'};
+ const assets={'/':'index.html','/app.js':'app.js','/style.css':'style.css','/engine.mjs':'../engine.mjs','/legend-plan.mjs':'../legend-plan.mjs','/legend-format.mjs':'../legend-format.mjs','/state-sync.mjs':'../state-sync.mjs','/batch-operations.mjs':'../batch-operations.mjs','/connections-ui.mjs':'connections-ui.mjs'};
  if(req.method==='GET'&&assets[url.pathname]){const name=assets[url.pathname];const b=await readFile(path.join(root,'public',name));res.writeHead(200,{'Content-Type':name.endsWith('.html')?'text/html; charset=utf-8':name.endsWith('.css')?'text/css; charset=utf-8':'text/javascript; charset=utf-8','Cache-Control':'no-store','X-Content-Type-Options':'nosniff','Content-Security-Policy':"default-src 'self'; connect-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'"});res.end(b);return;}
  json(res,404,{error:'Не найдено'});
  }catch(e){if(!res.headersSent)json(res,400,{error:e.message||'Ошибка запроса'});else res.end();}});

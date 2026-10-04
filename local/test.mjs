@@ -74,6 +74,6 @@ test('Желаемый стаж работает без компаний и во
  assert.equal(data('5,2').experience.required_resume_label,'5 лет 2 месяца');
  assert.deepEqual(data('3,5').jobs,[]);
  for(const value of ['',undefined,'  '])assert.deepEqual(data(value).experience,{mode:'default',min_months:48,max_months:54,target_months:53});
- assert.equal(data(0).experience.target_months,0);assert.equal(data(0).experience.mode,'custom');
+ for(const value of [0,'0','0,0','0.00'])assert.deepEqual(data(value).experience,data('').experience);
  for(const value of ['abc',-1,61,{},true,'Infinity'])assert.throws(()=>data(value));
 });

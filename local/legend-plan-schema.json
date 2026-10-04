@@ -1,0 +1,187 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "profile": {
+      "type": "string"
+    },
+    "employers": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "company": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string"
+          },
+          "period": {
+            "type": "string"
+          },
+          "context": {
+            "type": "string"
+          },
+          "team_process": {
+            "type": "string"
+          },
+          "scale": {
+            "type": "string"
+          },
+          "stack": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "company",
+          "role",
+          "period",
+          "context",
+          "team_process",
+          "scale",
+          "stack"
+        ]
+      },
+      "minItems": 1,
+      "maxItems": 2
+    },
+    "cases": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "employer_id": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "problem": {
+            "type": "string"
+          },
+          "standard_gap": {
+            "type": "string"
+          },
+          "own_contribution": {
+            "type": "string"
+          },
+          "solution": {
+            "type": "string"
+          },
+          "data_example": {
+            "type": "string"
+          },
+          "verification": {
+            "type": "string"
+          },
+          "result": {
+            "type": "string"
+          },
+          "limits": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "employer_id",
+          "title",
+          "problem",
+          "standard_gap",
+          "own_contribution",
+          "solution",
+          "data_example",
+          "verification",
+          "result",
+          "limits"
+        ]
+      },
+      "minItems": 3,
+      "maxItems": 4
+    },
+    "failures": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "case_id": {
+            "type": "string"
+          },
+          "context": {
+            "type": "string"
+          },
+          "mistake": {
+            "type": "string"
+          },
+          "detection": {
+            "type": "string"
+          },
+          "test_consequences": {
+            "type": "string"
+          },
+          "fix": {
+            "type": "string"
+          },
+          "verification": {
+            "type": "string"
+          },
+          "prevention": {
+            "type": "string"
+          },
+          "environment": {
+            "type": "string",
+            "enum": [
+              "test",
+              "local_copy",
+              "preprod"
+            ]
+          }
+        },
+        "required": [
+          "case_id",
+          "context",
+          "mistake",
+          "detection",
+          "test_consequences",
+          "fix",
+          "verification",
+          "prevention",
+          "environment"
+        ]
+      },
+      "minItems": 2,
+      "maxItems": 3
+    },
+    "questions": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "minItems": 0,
+      "maxItems": 5
+    },
+    "proposals": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "required": [
+    "profile",
+    "employers",
+    "cases",
+    "failures",
+    "questions",
+    "proposals"
+  ]
+}

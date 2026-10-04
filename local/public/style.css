@@ -53,3 +53,21 @@
 .rail-actions .stop-batch {border-color:#bd3d2d;background:#fff3f1;color:#a83224;font-weight:700}
 .rail-actions .stop-batch.hidden {display:none}
 .batch-status,.drive-status {margin:5px 10px;color:#7b8490;font-size:11px;line-height:1.45}
+
+/* Readable legend preview; editor keeps the original Markdown. */
+.legend-reading {color:#30363d;font-size:15px;line-height:1.75;overflow-wrap:anywhere}
+.legend-reading .legend-toc {display:flex;flex-wrap:wrap;gap:7px;margin:0 0 24px}
+.legend-toc a {border:1px solid #e3e7e5;border-radius:8px;padding:5px 10px;font-size:12px;color:#4b6254;background:#fafcfb;text-decoration:none}
+.legend-reading .legend-section {margin:0 0 24px;padding:20px;border:1px solid #e4e8e5;border-radius:12px;background:#fff;scroll-margin-top:24px}
+.legend-reading h2 {margin:0 0 18px;padding:10px 13px;background:#eaf3ed;border-radius:8px;color:#31543e;font-size:19px;line-height:1.35;letter-spacing:0}
+.legend-reading h3 {margin:24px 0 10px;color:#355e7d;font-size:16px;line-height:1.5;letter-spacing:0}
+.legend-reading p {margin:12px 0;white-space:normal}
+.legend-reading li {margin:6px 0}
+.legend-reading ul,.legend-reading ol {padding-left:22px;margin:12px 0}
+.legend-reading strong {font-weight:650}
+.legend-reading code {font-size:.9em;background:#f1f3f5;padding:2px 5px;border-radius:4px}
+.legend-reading hr {border:0;border-top:1px solid #e4e8e5;margin:24px 0}
+.legend-reading .legend-callout {padding:16px 18px;background:#edf4fa;border-left:3px solid #7999b3;border-radius:8px;color:#38556b;margin:12px 0 20px}
+.legend-profile-grid {display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,220px),1fr));gap:16px}
+.legend-profile-grid .legend-section {min-width:0}
+.legend-reading .legend-section:empty {display:none}

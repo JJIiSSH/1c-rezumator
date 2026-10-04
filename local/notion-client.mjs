@@ -50,6 +50,7 @@ export class NotionClient {
   this.pending.set(id,{resolve,reject,timer,method});this.send({method,id,params});
  });}
  rawCall(tool,args){return this.rpc('mcpServer/tool/call',{threadId:this.threadId,server:'codex_apps',tool,arguments:args},90000);}
+ async rawCallChecked(tool,args){await this.connect();return unwrapNotion(await this.rawCall(tool,args));}
  async createPage(page,parent){
   await this.connect();
   const args={pages:[page]};if(parent)args.parent=parent;
@@ -63,7 +64,8 @@ export class NotionClient {
  async updatePage(pageId,page){
   await this.connect();
   // The caller snapshots the fetched page first. Never allow deletion of child pages.
-  let result=unwrapNotion(await this.rawCall('notion.notion-update-page',{page_id:pageId,command:'replace_content',new_str:page.content,allow_async:false}));
+  const contentArgs=page.contentUpdates?{command:'update_content',content_updates:page.contentUpdates}:{command:'replace_content',new_str:page.content};
+  let result=unwrapNotion(await this.rawCall('notion.notion-update-page',{page_id:pageId,...contentArgs,allow_async:false}));
   if(result.async_task){
    const taskId=result.async_task.task_id||result.async_task.id;
    if(!taskId)throw new Error('Notion принял обновление, но не вернул номер задания. Проверьте страницу.');
@@ -89,7 +91,13 @@ export class NotionClient {
 }
 
 export function unwrapNotion(result){
- if(result?.isError)throw new Error('Notion отклонил запрос. Проверьте доступ к пространству в Codex.');
+ if(result?.isError){
+  const details=(result.content||[]).filter(c=>c.type==='text').flatMap(c=>{try{return [JSON.parse(c.text)];}catch{return [];}});
+  // Only an explicit validation rejection proves this single-page write did not happen.
+  const rejected=result.structuredContent?.error_code==='INVALID_ARGUMENT'||details.some(d=>d.code==='validation_error'&&d.status===400||d.additional_data?.tool_error_class==='validation'&&d.additional_data?.tool_error_code==='invalid_input');
+  const error=new Error(rejected?'Notion отклонил параметры страницы. Страница не создана; можно повторить после исправления.':'Notion отклонил запрос. Проверьте доступ к пространству в Codex.');
+  error.creationRejected=rejected;throw error;
+ }
  if(result?.structuredContent)return result.structuredContent;
  for(const c of result?.content||[])if(c.type==='text'){try{return JSON.parse(c.text);}catch{}}
  throw new Error('Не удалось прочитать ответ Notion.');
