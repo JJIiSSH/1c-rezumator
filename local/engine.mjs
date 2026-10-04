@@ -36,6 +36,7 @@ export function validateStudent(s){
  if(s.jobs.length>20)throw new Error('Максимум 20 мест работы');
  experienceSettings(s);
  if(s.resumeReady!==undefined&&typeof s.resumeReady!=='boolean')throw new Error('Некорректная отметка готовности');
+ if(s.legendReady!==undefined&&typeof s.legendReady!=='boolean')throw new Error('Некорректная отметка готовности легенды');
  if(s.fillMetrics!==undefined&&typeof s.fillMetrics!=='boolean')throw new Error('Некорректная настройка метрик');
  if(s.legendNotes!==undefined&&typeof s.legendNotes!=='string')throw new Error('Некорректные указания для легенды');
  if(s.legend!=null)parseLegendResult(JSON.stringify(s.legend),{allowEmpty:true});
@@ -92,7 +93,7 @@ export function publicResumeDisclosure(text){
  return match?.[0]||'';
 }
 export function inputSignature(s){
- const {result,resultSignature,legend,legendSignature,legendNotes,resumeReady,driveImport,targetExperienceYears,...input}=s;
+ const {result,resultSignature,legend,legendSignature,legendNotes,resumeReady,legendReady,driveImport,targetExperienceYears,...input}=s;
  if(targetExperienceYears!=null&&String(targetExperienceYears).trim())input.targetExperienceYears=targetExperienceYears;
  return JSON.stringify(input);
 }

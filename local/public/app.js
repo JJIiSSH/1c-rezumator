@@ -1,7 +1,7 @@
 import {same,studentChanges,keepPendingEdits} from '/state-sync.mjs';
 import {completeness,normalizeResumeText,inputSignature,legendSignature,studentStatus} from '/engine.mjs';
 import {legendHtml} from '/legend-format.mjs';
-import {batchResumeEligible,studentsMissingResume,studentsWithoutReadyResume,studentsPendingNotion,notionEntryPreventsDuplicate} from '/batch-operations.mjs';
+import {batchResumeEligible,batchLegendEligible,studentsMissingResume,studentsWithoutReadyResume,studentsWithoutReadyLegend,studentsPendingNotion,notionEntryPreventsDuplicate} from '/batch-operations.mjs';
 const $=s=>document.querySelector(s);
 const escape=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 let students=[],selected='',tab='questionnaire',token='',currentRulesVersion='',currentLegendRulesVersion='',resultView='resume',generationStarting=false,connected=false,activeJob=null,saveTimer=null,toastTimer=null;
@@ -9,7 +9,7 @@ let notionEntries={},notionContainer=null,notionTimer=null,notionWorkspaceName='
 const jobMessages=new Map();
 let startingStudentId=null;
 let savedStudents=[],saving=false,syncing=false,statePoll=null,loaded=false;
-const blank={name:'',telegram:'',age:'',github:'',location:'РФ',urgent:false,resumeReady:false,sourceUrl:'',project:'',configurations:'',tasks:'',complex:'',resume:'',pdfName:'',title:'Программист 1С',track:'Универсальный профиль',targetExperienceYears:'',notes:'',showAge:false,showGithub:true,fillMetrics:true,metrics:[],jobs:[],result:null,resultSignature:'',legend:null,legendSignature:'',legendNotes:''};
+const blank={name:'',telegram:'',age:'',github:'',location:'РФ',urgent:false,resumeReady:false,legendReady:false,sourceUrl:'',project:'',configurations:'',tasks:'',complex:'',resume:'',pdfName:'',title:'Программист 1С',track:'Универсальный профиль',targetExperienceYears:'',notes:'',showAge:false,showGithub:true,fillMetrics:true,metrics:[],jobs:[],result:null,resultSignature:'',legend:null,legendSignature:'',legendNotes:''};
 function current(){return students.find(s=>s.id===selected);}
 function signature(s){return inputSignature(s);}
 function toast(text){$('#toast').textContent=text;$('#toast').classList.remove('hidden');clearTimeout(toastTimer);toastTimer=setTimeout(()=>$('#toast').classList.add('hidden'),4500);}
@@ -322,16 +322,17 @@ function saveGenerationBatch(){
  else sessionStorage.removeItem('rezumator:generation-batch');
 }
 function renderBatchControls(){
- const generate=$('#generateMissing'),generateNotReady=$('#generateNotReady'),stop=$('#stopGenerationBatch'),notion=$('#exportAllNotion'),status=$('#batchStatus');if(!generate||!generateNotReady||!stop||!notion||!status)return;
- const missing=studentsMissingResume(students).length,notReady=studentsWithoutReadyResume(students).length,pending=studentsPendingNotion(students,notionEntries).length;
+ const generate=$('#generateMissing'),generateNotReady=$('#generateNotReady'),generateLegends=$('#generateLegends'),stop=$('#stopGenerationBatch'),notion=$('#exportAllNotion'),status=$('#batchStatus');if(!generate||!generateNotReady||!generateLegends||!stop||!notion||!status)return;
+ const missing=studentsMissingResume(students).length,notReady=studentsWithoutReadyResume(students).length,legends=studentsWithoutReadyLegend(students).length,pending=studentsPendingNotion(students,notionEntries).length;
  generate.textContent=`Сгенерировать всем без резюме · ${missing}`;
  generateNotReady.textContent=`Сгенерировать без галочки «Готово» · ${notReady}`;
+ generateLegends.textContent=`Сгенерировать легенды без готовности · ${legends}`;
  if(generationBatch?.running){
   const current=Math.min(generationBatch.completed+generationBatch.failed+1,generationBatch.total);
-  const activeButton=generationBatch.mode==='not_ready'?generateNotReady:generate;
+  const activeButton=generationBatch.kind==='legend'?generateLegends:generationBatch.mode==='not_ready'?generateNotReady:generate;
   activeButton.textContent=`Генерация · ${current}/${generationBatch.total}`;
-  generate.disabled=true;generateNotReady.disabled=true;stop.classList.remove('hidden');stop.disabled=false;
- }else{generate.disabled=Boolean(activeJob||generationStarting||notionBatch?.running||!missing);generateNotReady.disabled=Boolean(activeJob||generationStarting||notionBatch?.running||!notReady);stop.classList.add('hidden');}
+  generate.disabled=true;generateNotReady.disabled=true;generateLegends.disabled=true;stop.classList.remove('hidden');stop.disabled=false;
+ }else{generate.disabled=Boolean(activeJob||generationStarting||notionBatch?.running||!missing);generateNotReady.disabled=Boolean(activeJob||generationStarting||notionBatch?.running||!notReady);generateLegends.disabled=Boolean(activeJob||generationStarting||notionBatch?.running||!legends);stop.classList.add('hidden');}
  if(notionBatch?.running){notion.textContent=`Добавляем в Notion · ${notionBatch.completed+notionBatch.failed+1}/${notionBatch.total}`;notion.disabled=true;}
  else{notion.textContent=`Добавить готовые в Notion · ${pending}`;notion.disabled=Boolean(activeJob||generationStarting||generationBatch?.running||!pending);}
  status.textContent=generationBatch?.message||notionBatch?.message||'';
@@ -349,26 +350,30 @@ function advanceGenerationBatch(success){
 }
 async function startNextGenerationBatch(){
  if(!generationBatch?.running||activeJob||generationStarting)return;
- while(generationBatch.queue.length){
+ const batch=generationBatch,kind=batch.kind||'resume';
+ while(batch.queue.length){
   const id=generationBatch.queue.shift(),student=students.find(s=>s.id===id);
-  if(!batchResumeEligible(student,generationBatch.mode||'missing')){generationBatch.completed++;continue;}
-  generationBatch.currentId=id;generationBatch.message=`Генерируем: ${student.name||student.telegram||'ученик'}`;saveGenerationBatch();renderBatchControls();
+  if(kind==='legend'?!batchLegendEligible(student):!batchResumeEligible(student,generationBatch.mode||'missing')){generationBatch.completed++;continue;}
+  generationBatch.currentId=id;generationBatch.message=`${kind==='legend'?'Легенда':'Резюме'}: ${student.name||student.telegram||'ученик'}`;saveGenerationBatch();renderBatchControls();
   generationStarting=true;startingStudentId=id;showJob(`Запускаем ${providerName(generationSettings?.provider)}…`,false,id);
   try{
-   const snapshot=structuredClone(student),j=await api('/api/generate',{method:'POST',body:JSON.stringify(snapshot)});
-   activeJob={id:j.id,studentId:id,kind:'resume',provider:j.provider,providerName:j.providerName,signature:signature(snapshot),batch:true};
-   sessionStorage.setItem('rezumator:job',JSON.stringify(activeJob));renderJobStatus();renderReadiness();setTimeout(pollJob,1200);return;
+   const snapshot=structuredClone(student),j=await api(kind==='legend'?'/api/legend/generate':'/api/generate',{method:'POST',body:JSON.stringify(snapshot)});
+   activeJob={id:j.id,studentId:id,kind,provider:j.provider,providerName:j.providerName,signature:kind==='legend'?legendSignature(snapshot):signature(snapshot),batch:true};
+   sessionStorage.setItem('rezumator:job',JSON.stringify(activeJob));renderJobStatus();renderReadiness();
+   if(!batch.running)await api('/api/jobs/'+j.id,{method:'DELETE'});
+   setTimeout(pollJob,1200);return;
   }catch(e){showJob(e.message,true,id);generationBatch.running=false;generationBatch.queue.unshift(id);generationBatch.currentId=null;generationBatch.message=`Очередь остановлена: ${e.message} Генерация не запущена; осталось анкет: ${generationBatch.queue.length}.`;saveGenerationBatch();renderBatchControls();toast(generationBatch.message);return;}
   finally{generationStarting=false;startingStudentId=null;renderReadiness();renderBatchControls();}
  }
  generationBatch.running=false;generationBatch.message=`Массовая генерация завершена: ${generationBatch.completed} готово${generationBatch.failed?`, ${generationBatch.failed} с ошибкой`:''}.`;saveGenerationBatch();renderBatchControls();toast(generationBatch.message);
 }
-async function startGenerationBatch(mode='missing'){
+async function startGenerationBatch(mode='missing',kind='resume'){
  if(activeJob||generationStarting||generationBatch?.running||notionBatch?.running)return;
  await save();if(saving||studentChanges(savedStudents,students).length){toast('Сначала дождитесь сохранения анкет.');return;}
- const queue=(mode==='not_ready'?studentsWithoutReadyResume(students):studentsMissingResume(students)).map(s=>s.id);
- if(!queue.length){toast(mode==='not_ready'?'У всех заполненных учеников есть галочка «Резюме готово».':'У всех заполненных учеников уже есть резюме.');renderBatchControls();return;}
- generationBatch={running:true,mode,queue,total:queue.length,completed:0,failed:0,currentId:null,message:`В очереди: ${queue.length}`};saveGenerationBatch();renderBatchControls();startNextGenerationBatch();
+ if(activeJob||generationStarting||generationBatch?.running||notionBatch?.running)return;
+ const queue=(kind==='legend'?studentsWithoutReadyLegend(students):mode==='not_ready'?studentsWithoutReadyResume(students):studentsMissingResume(students)).map(s=>s.id);
+ if(!queue.length){toast(kind==='legend'?'Нет учеников с резюме без галочки «Легенда готова».':mode==='not_ready'?'У всех заполненных учеников есть галочка «Резюме готово».':'У всех заполненных учеников уже есть резюме.');renderBatchControls();return;}
+ generationBatch={running:true,kind,mode,queue,total:queue.length,completed:0,failed:0,currentId:null,message:`В очереди: ${queue.length}`};saveGenerationBatch();renderBatchControls();startNextGenerationBatch();
 }
 async function stopGenerationBatch(){
  if(!generationBatch?.running)return;
@@ -406,6 +411,7 @@ async function startNotionBatch(){
 }
 if($('#generateMissing'))$('#generateMissing').onclick=()=>startGenerationBatch('missing');
 if($('#generateNotReady'))$('#generateNotReady').onclick=()=>startGenerationBatch('not_ready');
+if($('#generateLegends'))$('#generateLegends').onclick=()=>startGenerationBatch('not_ready','legend');
 if($('#stopGenerationBatch'))$('#stopGenerationBatch').onclick=stopGenerationBatch;
 if($('#exportAllNotion'))$('#exportAllNotion').onclick=startNotionBatch;
 
@@ -444,17 +450,17 @@ if($('#generationModel')){
 
 function renderStudents(){
  $('#studentCount').textContent=students.length;
- $('#students').innerHTML=students.map((s,i)=>`<button class="student ${s.id===selected?'selected':''}" data-student="${s.id}" ${s.id===selected?'aria-current="true"':''}><span class="avatar">${String(i+1).padStart(2,'0')}</span><span class="student-info"><strong>${escape(s.name||s.telegram||'Новый ученик')}</strong><small class="${studentStatus(s).className}">${studentStatus(s).label}</small></span></button>`).join('');
+ $('#students').innerHTML=students.map((s,i)=>`<button class="student ${s.id===selected?'selected':''}" data-student="${s.id}" ${s.id===selected?'aria-current="true"':''}><span class="avatar">${String(i+1).padStart(2,'0')}</span><span class="student-info"><strong>${escape(s.name||s.telegram||'Новый ученик')}</strong><small class="${studentStatus(s).className}">${studentStatus(s).label}</small>${s.legendReady||s.legend?.legend_text?.trim()?`<small class="${s.legendReady?'ready':''}">${s.legendReady?'Легенда готова':'Есть легенда'}</small>`:''}</span></button>`).join('');
  $('#students').querySelectorAll('[data-student]').forEach(b=>b.onclick=()=>{selected=b.dataset.student;localStorage.setItem('rezumator:selected',selected);render();});
  renderBatchControls();
 }
 function renderForm(){const s=current();let html='';
- if(tab==='questionnaire')html=`<div class="section-title"><div><h3>Знакомимся с учеником</h3><p>Можно заполнить только то, что уже известно.</p></div><span class="pill">Анкета</span></div><div class="fields-grid">${input('name','Имя и фамилия','Как обращаться к ученику')}${input('telegram','Telegram','@username')}${input('age','Возраст','Необязательно','number')}${input('github','GitHub','Имя пользователя')}</div>${checkbox('urgent','Резюме нужно как можно скорее')}${checkbox('resumeReady','Резюме готово')}<p class="completion-hint">Отметь после своей проверки. До этого срочность остаётся видна в списке учеников.</p><hr><div class="section-title"><div><h3>Прежнее резюме</h3><p>Из PDF извлечём текст для генерации.</p></div></div><label class="upload" tabindex="0" id="uploadLabel">↑ <span id="uploadTitle">${escape(s.pdfName||'Загрузить PDF')}</span><small>До 15 МБ · файл с текстовым слоем</small><input id="pdfFile" type="file" accept="application/pdf,.pdf"></label>${/^https:\/\/drive\.google\.com\//.test(s.sourceUrl)?`<a class="source-link" href="${escape(s.sourceUrl)}" target="_blank" rel="noopener noreferrer">Открыть исходный PDF из анкеты ↗</a>`:''}<details class="source-text"><summary>Текст резюме ${s.resume?'· '+s.resume.length.toLocaleString('ru')+' символов':''}</summary><textarea data-field="resume" placeholder="Или вставьте текст резюме вручную">${escape(s.resume)}</textarea></details><hr>${textarea('project','О проекте','Сфера, назначение системы, пользователи, объём данных','Размер системы — контекст проекта, а не личное достижение.')}${configurationPicker()}${textarea('tasks','Что делал ученик','Задачи, технологии, конфигурации 1С','Можно описать опыт на любом стеке. Задачи для 1С достроим сами; личный опыт и задачи коллег лучше разделить.')}${textarea('complex','Сложные задачи и результаты','Что было сложно, как решили, что изменилось')}`;
+ if(tab==='questionnaire')html=`<div class="section-title"><div><h3>Знакомимся с учеником</h3><p>Можно заполнить только то, что уже известно.</p></div><span class="pill">Анкета</span></div><div class="fields-grid">${input('name','Имя и фамилия','Как обращаться к ученику')}${input('telegram','Telegram','@username')}${input('age','Возраст','Необязательно','number')}${input('github','GitHub','Имя пользователя')}</div>${checkbox('urgent','Резюме нужно как можно скорее')}${checkbox('resumeReady','Резюме готово')}<p class="completion-hint">Отметь после своей проверки. До этого срочность остаётся видна в списке учеников.</p>${checkbox('legendReady','Легенда готова')}<p class="section-note">Ставится после успешной генерации. Сними галочку, чтобы включить ученика в массовую генерацию легенд.</p><hr><div class="section-title"><div><h3>Прежнее резюме</h3><p>Из PDF извлечём текст для генерации.</p></div></div><label class="upload" tabindex="0" id="uploadLabel">↑ <span id="uploadTitle">${escape(s.pdfName||'Загрузить PDF')}</span><small>До 15 МБ · файл с текстовым слоем</small><input id="pdfFile" type="file" accept="application/pdf,.pdf"></label>${/^https:\/\/drive\.google\.com\//.test(s.sourceUrl)?`<a class="source-link" href="${escape(s.sourceUrl)}" target="_blank" rel="noopener noreferrer">Открыть исходный PDF из анкеты ↗</a>`:''}<details class="source-text"><summary>Текст резюме ${s.resume?'· '+s.resume.length.toLocaleString('ru')+' символов':''}</summary><textarea data-field="resume" placeholder="Или вставьте текст резюме вручную">${escape(s.resume)}</textarea></details><hr>${textarea('project','О проекте','Сфера, назначение системы, пользователи, объём данных','Размер системы — контекст проекта, а не личное достижение.')}${configurationPicker()}${textarea('tasks','Что делал ученик','Задачи, технологии, конфигурации 1С','Можно описать опыт на любом стеке. Задачи для 1С достроим сами; личный опыт и задачи коллег лучше разделить.')}${textarea('complex','Сложные задачи и результаты','Что было сложно, как решили, что изменилось')}`;
  if(tab==='settings')html=`<div class="section-title"><div><h3>Правила для этого резюме</h3><p>Твои параметры подставятся в запрос автоматически.</p></div></div><div class="settings-fixed"><strong>Город: Москва</strong><span>Общее правило курса</span></div>${input('title','Желаемая должность','Программист 1С')}<label class="field"><span>На чём сделать акцент</span><select data-field="track">${['Универсальный профиль','Торговля и склад','ERP и производство','Бухгалтерия','ЗУП и кадровый учёт','Интеграции','Ведущий разработчик'].map(t=>`<option ${t===s.track?'selected':''}>${t}</option>`).join('')}</select></label><label class="field"><span>Желаемый стаж, лет · необязательно</span><input data-field="targetExperienceYears" type="number" min="0" max="60" step="any" value="${escape(s.targetExperienceYears??'')}" placeholder="По умолчанию: 4–4,5 года"><small>Например, 3,5 = 3 года 6 месяцев. Ненулевой указанный стаж важнее дат мест работы: периоды будут пересчитаны. Пустое поле или 0 использует стандартные 4–4,5 года. Последняя работа будет указана по настоящее время.</small></label>${checkbox('showAge','Добавить возраст в резюме')}${checkbox('showGithub','Добавить GitHub, если указан')}<hr><div class="section-title"><div><h3>Места работы</h3><p>Заданные здесь значения имеют приоритет над PDF.</p></div></div><div class="section-note">Компании можно не заполнять: возьмём их из прежнего резюме или предложим подходящие компании и проекты. Периоды подберём под желаемый стаж; предложения будут отмечены в проверке.</div><div id="jobCards">${s.jobs.map((j,i)=>jobCard(j,i)).join('')}</div><button class="secondary-button" id="addJob">＋ Добавить место работы</button><hr>${metricsEditor()}<hr>${textarea('notes','Указания для генерации','Например: акцент на интеграциях; подробнее раскрыть последний проект; сократить нерелевантный опыт','Формулировки и структуру Codex выберет сам.')}`;
  if(tab==='prompt')html=`<div class="section-title"><div><h3>Запрос уже собран</h3><p>Общие правила + настройки + данные ученика.</p></div></div><div class="section-note">Это именно тот запрос, который отправится в выбранную модель. Редактировать его вручную не требуется: меняй поля анкеты и настройки.</div><textarea id="promptText" class="prompt-area" readonly aria-label="Собранный промпт">Собираем…</textarea><button id="copyPrompt" class="secondary-button">Копировать промпт</button>`;
  $('#formContent').innerHTML=(tab==='questionnaire'?renderDriveHistory(s):'')+html;
  bindDriveHistory(s);
- $('#formContent').querySelectorAll('[data-field]').forEach(el=>el.addEventListener('input',()=>{s[el.dataset.field]=el.type==='checkbox'?el.checked:el.value;scheduleSave();renderReadiness();if(['name','telegram','urgent','resumeReady'].includes(el.dataset.field)){renderStudents();$('#candidateHeading').textContent=s.name||s.telegram||'Новый ученик';}updateStale();if(el.dataset.field==='fillMetrics')renderForm();}));
+ $('#formContent').querySelectorAll('[data-field]').forEach(el=>el.addEventListener('input',()=>{s[el.dataset.field]=el.type==='checkbox'?el.checked:el.value;scheduleSave();renderReadiness();if(['name','telegram','urgent','resumeReady','legendReady'].includes(el.dataset.field)){renderStudents();$('#candidateHeading').textContent=s.name||s.telegram||'Новый ученик';}updateStale();if(el.dataset.field==='legendReady')$('#legendReady').checked=s.legendReady===true;if(el.dataset.field==='fillMetrics')renderForm();}));
  $('#formContent').querySelectorAll('[data-job]').forEach(el=>el.addEventListener('input',()=>{s.jobs[Number(el.dataset.job)][el.dataset.key]=el.type==='checkbox'?el.checked:el.value;if(el.dataset.key==='current'&&el.checked)s.jobs[Number(el.dataset.job)].end='';scheduleSave();renderReadiness();updateStale();if(el.dataset.key==='current')renderForm();}));
  $('#formContent').querySelectorAll('[data-remove-job]').forEach(el=>el.onclick=()=>{s.jobs.splice(Number(el.dataset.removeJob),1);scheduleSave();renderForm();renderReadiness();updateStale();});
  if($('#addJob'))$('#addJob').onclick=()=>{if(s.jobs.length>=20){toast('Максимум 20 мест работы');return;}s.jobs.push({company:'',role:'',start:'',end:'',current:false,tasks:''});scheduleSave();renderForm();};
@@ -479,7 +485,7 @@ function renderForm(){const s=current();let html='';
  if(tab==='prompt'){api('/api/prompt',{method:'POST',body:JSON.stringify(s)}).then(r=>{if(tab==='prompt'&&s.id===selected){$('#promptText').value=r.prompt;currentRulesVersion=r.rules_version||'';updateStale();}}).catch(e=>toast(e.message));$('#copyPrompt').onclick=()=>copy($('#promptText').value);}
 }
 function jobCard(j,i){const f=(key,label,type='text')=>`<label class="field"><span>${label}</span><input type="${type}" data-job="${i}" data-key="${key}" value="${escape(j[key])}" ${key==='end'&&j.current?'disabled':''}></label>`;return `<div class="job-card"><div class="job-card-head"><strong>Место работы ${i+1}</strong><button class="danger-link" data-remove-job="${i}">Убрать</button></div><div class="fields-grid">${f('company','Компания')}${f('role','Должность')}${f('start','Начало','month')}${f('end','Окончание','month')}</div><label class="check-label"><input data-job="${i}" data-key="current" type="checkbox" ${j.current?'checked':''}>Работает сейчас</label><label class="field"><span>Задачи и проект · необязательно</span><textarea data-job="${i}" data-key="tasks" placeholder="Можно оставить пустым — задачи для этой работы достроим из общего контекста">${escape(j.tasks)}</textarea></label></div>`;}
-function renderReadiness(){const c=completeness(current()),n=c.filter(x=>x.ok).length;$('#readinessCount').textContent=`${n} / ${c.length}`;$('#readinessBar').value=n;$('#inputChecks').innerHTML=c.map(x=>`<div class="input-check ${x.ok?'ok':''}"><span class="check-symbol">${x.ok?'✓':'·'}</span><div>${x.label}${!x.ok?`<small>${x.hint}</small>${x.field?`<button class="check-action" data-jump-field="${x.field}">Указать конфигурации →</button>`:''}`:''}</div></div>`).join('');$('#inputChecks').querySelectorAll('[data-jump-field]').forEach(b=>b.onclick=()=>{tab='questionnaire';setTab();renderForm();const field=b.dataset.jumpField==='configurations'?$('#configurationPreset'):$('#formContent [data-field="'+b.dataset.jumpField+'"]');field?.scrollIntoView({behavior:'smooth',block:'center'});field?.focus({preventScroll:true});});$('#generate').disabled=!connected||!modelSettingsReady||modelSaving||!!activeJob||generationStarting||(resultView==='legend'&&!current().result?.resume_text?.trim());renderJobStatus();}
+function renderReadiness(){const c=completeness(current()),n=c.filter(x=>x.ok).length;$('#readinessCount').textContent=`${n} / ${c.length}`;$('#readinessBar').value=n;$('#inputChecks').innerHTML=c.map(x=>`<div class="input-check ${x.ok?'ok':''}"><span class="check-symbol">${x.ok?'✓':'·'}</span><div>${x.label}${!x.ok?`<small>${x.hint}</small>${x.field?`<button class="check-action" data-jump-field="${x.field}">Указать конфигурации →</button>`:''}`:''}</div></div>`).join('');$('#inputChecks').querySelectorAll('[data-jump-field]').forEach(b=>b.onclick=()=>{tab='questionnaire';setTab();renderForm();const field=b.dataset.jumpField==='configurations'?$('#configurationPreset'):$('#formContent [data-field="'+b.dataset.jumpField+'"]');field?.scrollIntoView({behavior:'smooth',block:'center'});field?.focus({preventScroll:true});});$('#generate').disabled=!connected||!modelSettingsReady||modelSaving||!!activeJob||generationStarting||generationBatch?.running||notionBatch?.running||(resultView==='legend'&&!current().result?.resume_text?.trim());renderJobStatus();}
 function updateStale(){updateLegendStale();const s=current(),el=$('#stale');if(!el)return;const oldRules=currentRulesVersion&&s.result?.rules_version!==currentRulesVersion;const changed=s.resultSignature!==signature(s);el.classList.toggle('hidden',!oldRules&&!changed);el.textContent=oldRules?'Правила генерации обновились. Это резюме создано по прежним правилам — сгенерируй новую версию.':'Исходные данные изменились. Сгенерируй новую версию, чтобы учесть правки.';}
 function renderResultMode(){
  const legend=resultView==='legend',s=current();
@@ -489,6 +495,8 @@ function renderResultMode(){
  $('#generate').textContent=legend?'Сгенерировать легенду':'Сгенерировать резюме';
  $('#copyLegendRules').onclick=async()=>{try{const r=await api('/api/legend/rules');await copy(r.prompt);}catch(e){toast(e.message);}};
  $('#legendNotes').value=s.legendNotes||'';
+ $('#legendReady').checked=s.legendReady===true;
+ $('#legendReady').onchange=e=>{s.legendReady=e.target.checked;scheduleSave();renderStudents();renderForm();};
  $('#legendNotes').oninput=e=>{s.legendNotes=e.target.value;scheduleSave();updateLegendStale();};
  $('#legendSourceHint').textContent=s.result?.resume_text?.trim()?'Основа: текст в редакторе резюме, включая ручные правки.':'Сначала создай резюме во вкладке «Резюме».';
  renderReadiness();
@@ -588,15 +596,16 @@ async function pollJob(){
   let success=false;
   if(j.status==='done'){
    const s=students.find(x=>x.id===localJob.studentId);
-   if(s){if(localJob.kind==='legend'){s.legend=j.result;s.legendSignature=localJob.signature;currentLegendRulesVersion=j.result.rules_version||currentLegendRulesVersion;}else{s.result=j.result;s.resultSignature=localJob.signature;currentRulesVersion=j.result.rules_version||currentRulesVersion;}scheduleSave();if(localJob.batch)await save();success=true;}
+   if(s){if(localJob.kind==='legend'){s.legend=j.result;s.legendSignature=localJob.signature;s.legendReady=true;currentLegendRulesVersion=j.result.rules_version||currentLegendRulesVersion;}else{s.result=j.result;s.resultSignature=localJob.signature;currentRulesVersion=j.result.rules_version||currentRulesVersion;}scheduleSave();if(localJob.batch)await save();success=true;}
    showJob(localJob.kind==='legend'?'Легенда готова. Проверь рассказ и предложенные детали.':'Резюме готово. Проверь текст и вопросы ученику.',false,localJob.studentId);toast(localJob.kind==='legend'?'Легенда готова':'Резюме готово');
   }else showJob(j.message,j.status==='error',localJob.studentId);
   activeJob=null;sessionStorage.removeItem('rezumator:job');$('#cancel').classList.add('hidden');renderStudents();renderReadiness();renderResult();
+  const readyField=$('#formContent [data-field="legendReady"]');if(readyField)readyField.checked=current().legendReady===true;
   if(localJob.batch)advanceGenerationBatch(success);
  }catch(e){if(e.status===404||e.status===403){showJob(e.message,true,localJob.studentId);activeJob=null;sessionStorage.removeItem('rezumator:job');$('#cancel').classList.add('hidden');renderReadiness();renderBatchControls();if(localJob.batch)advanceGenerationBatch(false);}else{showJob('Связь с локальным сервером прервалась. Пробуем восстановить…',true,localJob.studentId);setTimeout(pollJob,4000);}}
 }
 $('#generate').onclick=async()=>{
- if(activeJob||generationStarting)return;
+ if(activeJob||generationStarting||generationBatch?.running||notionBatch?.running)return;
  const s=structuredClone(current()),kind=resultView,name=providerName(generationSettings?.provider);generationStarting=true;startingStudentId=s.id;renderReadiness();showJob(kind==='legend'?'Готовим рассказ по резюме…':`Запускаем ${name}…`,false,s.id);
  try{
   const j=await api(kind==='legend'?'/api/legend/generate':'/api/generate',{method:'POST',body:JSON.stringify(s)});

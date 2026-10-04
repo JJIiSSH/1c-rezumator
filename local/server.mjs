@@ -32,9 +32,11 @@ const readLegendRules=()=>readFile(path.join(root,'prompts/legend.md'),'utf8');
 const schemaFiles={resume:'schema.json',legend:'legend-schema.json','legend-plan':'legend-plan-schema.json'};
 const outputSchemas=Object.fromEntries(await Promise.all(Object.entries(schemaFiles).map(async([kind,file])=>[kind,JSON.parse(await readFile(path.join(root,file),'utf8'))])));
 const rulesVersion=rules=>createHash('sha256').update(rules).digest('hex').slice(0,12);
-const defaults={name:'',telegram:'',age:'',github:'',location:'РФ',urgent:false,resumeReady:false,sourceUrl:'',project:'',configurations:'',tasks:'',complex:'',resume:'',pdfName:'',title:'Программист 1С',track:'Универсальный профиль',targetExperienceYears:'',notes:'',showAge:false,showGithub:true,fillMetrics:true,metrics:[],jobs:[],result:null,resultSignature:'',legend:null,legendSignature:'',legendNotes:''};
+const defaults={name:'',telegram:'',age:'',github:'',location:'РФ',urgent:false,resumeReady:false,legendReady:false,sourceUrl:'',project:'',configurations:'',tasks:'',complex:'',resume:'',pdfName:'',title:'Программист 1С',track:'Универсальный профиль',targetExperienceYears:'',notes:'',showAge:false,showGithub:true,fillMetrics:true,metrics:[],jobs:[],result:null,resultSignature:'',legend:null,legendSignature:'',legendNotes:''};
 let state;
 try{state=JSON.parse(await readFile(path.join(dataDir,'students.json'),'utf8'));}catch(e){if(e.code!=='ENOENT')throw e;state=(JSON.parse(await readFile(path.join(root,'seed.json'),'utf8'))).map(s=>({...defaults,...s}));}
+// Legacy records must expose false too, so the first checkbox edit has the same CAS baseline in both browsers.
+state=state.map(s=>({...s,legendReady:s.legendReady===undefined?false:s.legendReady}));
 const codex=codexExecutable();
 const claude=process.env.REZUMATOR_CLAUDE||'claude';
 const python=process.env.REZUMATOR_PYTHON||'python3';

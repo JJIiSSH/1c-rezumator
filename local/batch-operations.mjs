@@ -16,6 +16,14 @@ export function studentsWithoutReadyResume(students){
  return (students||[]).filter(student=>batchResumeEligible(student,'not_ready'));
 }
 
+export function batchLegendEligible(student){
+ return text(student?.result?.resume_text)&&student.legendReady!==true;
+}
+
+export function studentsWithoutReadyLegend(students){
+ return (students||[]).filter(batchLegendEligible);
+}
+
 export function notionEntryPreventsDuplicate(entry){
  return Boolean(entry&&(entry.pageId||['done','creating','uncertain','updating','update_error'].includes(entry.status)));
 }

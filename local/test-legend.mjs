@@ -38,3 +38,11 @@ test('Легенда, её правки и пустой редактор сох�
  assert.throws(()=>validateStudent({...stored,legendNotes:42}));
  assert.throws(()=>validateStudent({...stored,legend:{...legend,legend_text:'x'.repeat(120001)}}));
 });
+
+test('Готовность легенды не меняет подписи резюме и легенды и валидируется отдельно',()=>{
+ const ready={...student,legendReady:true};
+ assert.equal(inputSignature(ready),inputSignature(student));assert.equal(legendSignature(ready),legendSignature(student));
+ assert.doesNotThrow(()=>validateStudent({...student,legendReady:false}));assert.doesNotThrow(()=>validateStudent(ready));
+ assert.throws(()=>validateStudent({...student,legendReady:'true'}),/готовности легенды/);
+ const input=JSON.parse(buildLegendPrompt(ready,'rules').split('(JSON):\n')[1]);assert.ok(!JSON.stringify(input).includes('legendReady'));
+});

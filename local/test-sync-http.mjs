@@ -17,10 +17,12 @@ test('Две HTTP-сессии сохраняют разные поля; ста�
  for(let i=0;i<100;i++){try{session=await(await fetch(base+'/api/session')).json();break;}catch{await new Promise(r=>setTimeout(r,30));}}assert.ok(session);
  async function request(p,body){return fetch(base+p,{method:body===undefined?'GET':'POST',headers:{'x-rezumator-token':session.token,'Content-Type':'application/json'},...(body===undefined?{}:{body:JSON.stringify(body)})});}
  const a=await(await request('/api/state')).json(),b=await(await request('/api/state')).json();
- const editedA=structuredClone(a);editedA[0].resumeReady=true;const editedB=structuredClone(b);editedB[0].notes='Правка из другого браузера';
+ assert.equal(a[0].legendReady,false);
+ const editedA=structuredClone(a);editedA[0].resumeReady=true;editedA[0].legendReady=true;const editedB=structuredClone(b);editedB[0].notes='Правка из другого браузера';
  assert.equal((await request('/api/state/changes',studentChanges(a,editedA))).status,200);
  assert.equal((await request('/api/state/changes',studentChanges(b,editedB))).status,200);
- const saved=await(await request('/api/state')).json();assert.equal(saved[0].resumeReady,true);assert.equal(saved[0].urgent,true);assert.equal(saved[0].notes,editedB[0].notes);
+ const saved=await(await request('/api/state')).json();assert.equal(saved[0].resumeReady,true);assert.equal(saved[0].legendReady,true);assert.equal(saved[0].urgent,true);assert.equal(saved[0].notes,editedB[0].notes);
+ assert.equal((await request('/api/state/changes',[{id:'test',fields:{legendReady:{before:true,value:'true'}}}])).status,400);
  const stale=structuredClone(b);stale[0].notes='Конфликт';assert.equal((await request('/api/state/changes',studentChanges(b,stale))).status,409);assert.equal((await request('/api/state',b)).status,409);
  assert.deepEqual(await(await request('/api/state')).json(),saved);assert.deepEqual(JSON.parse(await readFile(path.join(dir,'students.json'),'utf8')),saved);
 });
