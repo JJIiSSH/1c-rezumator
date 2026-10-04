@@ -4,6 +4,6 @@
   "type": "module",
   "scripts": {
     "start": "node server.mjs",
-    "test": "node --test test.mjs test-legend.mjs test-status.mjs test-notion.mjs test-sync.mjs test-sync-http.mjs test-job-status.mjs test-drive.mjs test-model-settings.mjs test-runtime-paths.mjs test-experience.mjs test-chronology.mjs test-batch.mjs test-connections.mjs test-connections-http.mjs test-provider-http.mjs test-legend-workflow.mjs test-legend-http.mjs test-legend-format.mjs test-legend-map.mjs"
+    "test": "node --test test.mjs test-legend.mjs test-status.mjs test-notion.mjs test-sync.mjs test-sync-http.mjs test-job-status.mjs test-drive.mjs test-model-settings.mjs test-runtime-paths.mjs test-experience.mjs test-chronology.mjs test-batch.mjs test-connections.mjs test-connections-http.mjs test-provider-http.mjs test-legend-workflow.mjs test-legend-http.mjs test-legend-format.mjs test-legend-map.mjs test-model-runner.mjs"
   }
 }

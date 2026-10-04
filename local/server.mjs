@@ -78,7 +78,7 @@ const jobs=new Map();let active=null;let saveQueue=Promise.resolve();
 function json(res,status,data){res.writeHead(status,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});res.end(JSON.stringify(data));}
 async function body(req,limit=2_000_000){let bytes=0;const chunks=[];for await(const c of req){bytes+=c.length;if(bytes>limit)throw new Error('Слишком большой файл или анкета');chunks.push(c);}return Buffer.concat(chunks);}
 function stop(job){if(job.child&&!job.child.killed){job.child.kill('SIGTERM');setTimeout(()=>{try{job.child.kill('SIGKILL');}catch{}},1500).unref();}job.status='cancelled';job.message='Генерация остановлена';}
-function publicJob(j){return {id:j.id,studentId:j.studentId,kind:j.kind||'resume',provider:j.provider,providerName:j.providerName,model:j.model,reasoning_effort:j.reasoning_effort,status:j.status,message:j.message,result:j.result||null,createdAt:j.createdAt};}
+function publicJob(j){return {id:j.id,studentId:j.studentId,kind:j.kind||'resume',provider:j.provider,providerName:j.providerName,model:j.model,reasoning_effort:j.reasoning_effort,status:j.status,message:j.message,result:j.result||null,createdAt:j.createdAt,stage:j.stage||null,errorCode:j.errorCode||null};}
 function generate(s,rules,kind='resume',settings){
  const {provider,model,reasoning_effort}=settings,providerName=GENERATION_PROVIDERS[provider].name;
  const job={id:randomUUID(),studentId:s.id,kind,provider,providerName,model,reasoning_effort,status:'running',message:kind==='legend'?'Этап 1/2: собираем профиль и карточки кейсов…':`${providerName} готовит резюме…`,createdAt:Date.now()};jobs.set(job.id,job);active=job;
@@ -92,7 +92,7 @@ function generate(s,rules,kind='resume',settings){
    });
    if(job.status!=='running')return;
    job.result={...result,rules_version:rulesVersion(rules),provider,model,reasoning_effort};job.status='done';job.message=kind==='legend'?'Легенда готова':'Резюме готово';
-  }catch(e){if(job.status==='running'){job.status='error';job.message=e instanceof SyntaxError?`${providerName} вернул ответ в неожиданном формате. Повторите генерацию.`:e.message;}}
+  }catch(e){if(job.status==='running'){job.status='error';job.message=e instanceof SyntaxError?`${providerName} вернул ответ в неожиданном формате. Повторите генерацию.`:e.message;job.errorCode=/^GENERATION_[A-Z_]+$/.test(e.code||'')?e.code:'GENERATION_FAILED';console.warn(JSON.stringify({event:'generation_failed',jobId:job.id,studentId:job.studentId,kind,stage:job.stage||null,provider,model,errorCode:job.errorCode,providerCode:e.providerCode||null}));}}
   finally{if(active===job)active=null;}
  })();return job;
 }

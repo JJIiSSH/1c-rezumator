@@ -646,7 +646,7 @@ async function pollJob(){
    }
    const message=localJob.kind==='legend'?(notionError?'Легенда готова, но Notion не обновлён: '+notionError:mapError?'Легенда готова и отправлена в Notion, но карта не создана: '+mapError:'Легенда и карта готовы. Ссылка добавлена в Notion. Проверь рассказ и предложенные детали.'):'Резюме готово. Проверь текст и вопросы ученику.';
    showJob(message,Boolean(notionError||mapError),localJob.studentId);toast(notionError||mapError?message:localJob.kind==='legend'?'Легенда и карта готовы в Notion':'Резюме готово');
-  }else showJob(j.message,j.status==='error',localJob.studentId);
+  }else showJob(j.status==='error'&&localJob.kind==='legend'&&j.stage?`Этап ${j.stage}/2: ${j.message}`:j.message,j.status==='error',localJob.studentId);
   activeJob=null;sessionStorage.removeItem('rezumator:job');$('#cancel').classList.add('hidden');renderStudents();renderReadiness();renderResult();
   const readyField=$('#formContent [data-field="legendReady"]');if(readyField)readyField.checked=current().legendReady===true;
   if(localJob.batch)advanceGenerationBatch(success);
