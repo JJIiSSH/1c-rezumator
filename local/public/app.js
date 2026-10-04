@@ -341,7 +341,7 @@ function advanceGenerationBatch(success){
  if(!generationBatch)return;
  const stopped=!generationBatch.running;
  if(success)generationBatch.completed++;else if(!stopped)generationBatch.failed++;
- const notionErrors=generationBatch.notionFailed?` Ошибок отправки в Notion: ${generationBatch.notionFailed}.`:'';
+ const notionErrors=(generationBatch.notionFailed?` Ошибок отправки в Notion: ${generationBatch.notionFailed}.`:'')+(generationBatch.mapFailed?` Ошибок создания карты: ${generationBatch.mapFailed}.`:'');
  generationBatch.currentId=null;generationBatch.message=`Готово ${generationBatch.completed} из ${generationBatch.total}${generationBatch.failed?`, ошибок: ${generationBatch.failed}`:''}${notionErrors}`;
  if(!generationBatch.running||!generationBatch.queue.length){
   generationBatch.running=false;generationBatch.message=stopped?`Массовая генерация остановлена. Готово: ${generationBatch.completed}.`:`Массовая генерация завершена: ${generationBatch.completed} готово${generationBatch.failed?`, ${generationBatch.failed} с ошибкой`:''}.`;
@@ -375,7 +375,7 @@ async function startGenerationBatch(mode='missing',kind='resume'){
  if(activeJob||generationStarting||generationBatch?.running||notionBatch?.running)return;
  const queue=(kind==='legend'?studentsWithoutReadyLegend(students):mode==='not_ready'?studentsWithoutReadyResume(students):studentsMissingResume(students)).map(s=>s.id);
  if(!queue.length){toast(kind==='legend'?'Нет учеников с резюме без галочки «Легенда готова».':mode==='not_ready'?'У всех заполненных учеников есть галочка «Резюме готово».':'У всех заполненных учеников уже есть резюме.');renderBatchControls();return;}
- generationBatch={running:true,kind,mode,queue,total:queue.length,completed:0,failed:0,notionFailed:0,currentId:null,message:`В очереди: ${queue.length}`};saveGenerationBatch();renderBatchControls();startNextGenerationBatch();
+ generationBatch={running:true,kind,mode,queue,total:queue.length,completed:0,failed:0,notionFailed:0,mapFailed:0,currentId:null,message:`В очереди: ${queue.length}`};saveGenerationBatch();renderBatchControls();startNextGenerationBatch();
 }
 async function stopGenerationBatch(){
  if(!generationBatch?.running)return;
@@ -392,6 +392,25 @@ async function waitNotionEntry(studentId){
  }
  throw new Error('Notion не завершил экспорт за 6 минут. Повтор не запущен, чтобы не создать дубль.');
 }
+async function publishGeneratedLegendMap(studentId){
+ showJob('Легенда отправлена в Notion. Создаём карту Excalidraw…',false,studentId);
+ const started=await api('/api/legend/maps',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({studentId})});
+ legendMapEntries[studentId]=started;renderLegendMap();
+ let entry=started;
+ for(let i=0;i<240;i++){
+  if(entry?.status==='done'){
+   if(!safeLegendMapUrl(entry.url))throw Error('Не удалось подтвердить ссылку на карту Excalidraw.');
+   return entry;
+  }
+  if(entry?.status==='error')throw Error(entry.message||'Не удалось создать карту Excalidraw.');
+  await delay(1500);
+  const state=await api('/api/legend/maps');legendMapEntries=state.entries;renderLegendMap();
+  entry=legendMapEntries[studentId];
+  if(entry?.pageId!==started.pageId)throw Error('Страница ученика изменилась во время создания карты. Проверьте Notion.');
+  showJob(entry?.message||'Создаём карту Excalidraw…',false,studentId);
+ }
+ throw Error('Создание карты не завершилось за 6 минут. Проверьте её статус перед повторным запуском.');
+}
 async function publishGeneratedLegend(studentId){
  autoNotionStudentId=studentId;renderNotion();
  showJob('Легенда готова. Отправляем в Notion…',false,studentId);
@@ -407,6 +426,7 @@ async function publishGeneratedLegend(studentId){
   notionEntries[studentId]=entry;renderNotion();
   const done=['creating','updating'].includes(entry.status)?await waitNotionEntry(studentId):entry;
   if(done.status!=='done')throw Error(done.message||'Не удалось отправить легенду в Notion.');
+  try{await publishGeneratedLegendMap(studentId);}catch(error){error.stage='map';throw error;}
   return done;
  }finally{autoNotionStudentId=null;renderNotion();}
 }
@@ -559,7 +579,7 @@ let legendMapEntries={},legendMapTimer;
 function safeLegendMapUrl(value){try{const u=new URL(value);return u.origin==='https://excalidraw.com'&&u.pathname==='/'&&/^#json=[a-zA-Z0-9_-]+,[a-zA-Z0-9_-]{22}$/.test(u.hash)?u.href:null;}catch{return null;}}
 function renderLegendMap(){
  const container=$('#legendMap');if(!container)return;const s=current(),entry=legendMapEntries[s.id],url=safeLegendMapUrl(entry?.url),busy=entry?.status==='running';
- container.innerHTML=`<div class="result-actions"><button class="secondary-button" id="createLegendMap" ${busy||autoNotionStudentId?'disabled':''}>${busy?'Создаём карту…':url?'Обновить карту в Excalidraw':'Создать карту в Excalidraw'}</button>${url?`<a class="secondary-button" href="${escape(url)}" target="_blank" rel="noopener noreferrer">Открыть карту легенды ↗</a>`:''}</div><small>Из актуальной легенды на странице Notion. Ссылка на карту появится там же.</small><p class="notion-status ${entry?.status==='error'?'error':''}" role="status">${escape(entry?.message||'')}</p>`;
+ container.innerHTML=`<div class="result-actions"><button class="secondary-button" id="createLegendMap" ${busy||autoNotionStudentId?'disabled':''}>${busy?'Создаём карту…':url?'Обновить карту в Excalidraw':'Создать карту в Excalidraw'}</button>${url?`<a class="secondary-button" href="${escape(url)}" target="_blank" rel="noopener noreferrer">Открыть карту легенды ↗</a>`:''}</div><small>После генерации создаётся автоматически из актуальной легенды Notion. Ссылка появится там же. После ручных правок карту можно обновить этой кнопкой.</small><p class="notion-status ${entry?.status==='error'?'error':''}" role="status">${escape(entry?.message||'')}</p>`;
  $('#createLegendMap').onclick=async()=>{const studentId=current().id;$('#createLegendMap').disabled=true;try{legendMapEntries[studentId]=await api('/api/legend/maps',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({studentId})});renderLegendMap();scheduleLegendMapPoll();}catch(e){toast(e.message);renderLegendMap();}};
 }
 function scheduleLegendMapPoll(){clearTimeout(legendMapTimer);legendMapTimer=setTimeout(refreshLegendMaps,2000);}
@@ -571,7 +591,7 @@ function renderNotion(){
  const link=url?`<a class="secondary-button notion-link" href="${escape(url)}" target="_blank" rel="noopener noreferrer">Открыть резюме в NOTION ↗</a>`:'';
  const hubUrl=safeNotionUrl(entry?.hubUrl),hubLink=hubUrl?`<a class="secondary-button notion-link" href="${escape(hubUrl)}" target="_blank" rel="noopener noreferrer">Открыть страницу ученика ↗</a>`:'';
  const folderUrl=safeNotionUrl(notionContainer?.url),folderLink=folderUrl?`<a class="secondary-button notion-link" href="${escape(folderUrl)}" target="_blank" rel="noopener noreferrer">Открыть папку резюме ↗</a>`:'';
- container.innerHTML=`<div class="result-actions">${hubLink}${link}${folderLink}<button class="secondary-button" id="writeNotion" ${busy||uncertain||batchBusy?'disabled':''}>${autoNotionStudentId===s.id?'Отправляем легенду в Notion…':autoNotionStudentId?'Notion занят отправкой другой легенды…':batchBusy?'Идёт массовый экспорт…':busy?(existing?'Обновляем страницу…':'Создаём страницу…'):(existing?'Обновить страницу в NOTION':'Создать страницу в NOTION')}</button></div>${existing?'<label class="check-label"><input type="checkbox" id="replaceNotionLegend"> Заменить легенду в Notion текущей легендой резюматора</label>':''}<small>${existing?'Обновит резюме. Существующая легенда в Notion сохраняется, пока вы явно не выберете её замену. После новой генерации легенда обновляется автоматически. Проверки остаются в резюматоре. Прежняя версия сохраняется на компьютере.':escape(notionWorkspaceName||'Ваше пространство Notion')+' · Папка «Резюме учеников» · Резюме и легенда, если она есть'}</small><div id="legendMap"></div><p class="notion-status ${entry?.status==='error'||entry?.status==='update_error'||uncertain?'error':''}" role="status">${escape(entry?.message||'')}</p>`;
+ container.innerHTML=`<div class="result-actions">${hubLink}${link}${folderLink}<button class="secondary-button" id="writeNotion" ${busy||uncertain||batchBusy?'disabled':''}>${autoNotionStudentId===s.id?'Отправляем легенду в Notion…':autoNotionStudentId?'Notion занят отправкой другой легенды…':batchBusy?'Идёт массовый экспорт…':busy?(existing?'Обновляем страницу…':'Создаём страницу…'):(existing?'Обновить страницу в NOTION':'Создать страницу в NOTION')}</button></div>${existing?'<label class="check-label"><input type="checkbox" id="replaceNotionLegend"> Заменить легенду в Notion текущей легендой резюматора</label>':''}<small>${existing?'Обновит резюме. Существующая легенда в Notion сохраняется, пока вы явно не выберете её замену. После новой генерации легенда и карта обновляются автоматически. Проверки остаются в резюматоре. Прежняя версия сохраняется на компьютере.':escape(notionWorkspaceName||'Ваше пространство Notion')+' · Папка «Резюме учеников» · Резюме и легенда, если она есть'}</small><div id="legendMap"></div><p class="notion-status ${entry?.status==='error'||entry?.status==='update_error'||uncertain?'error':''}" role="status">${escape(entry?.message||'')}</p>`;
  renderLegendMap();
  $('#writeNotion').onclick=async()=>{
   const snapshot=structuredClone(current());if(existing)snapshot.replaceNotionLegend=$('#replaceNotionLegend')?.checked===true;const button=$('#writeNotion');button.disabled=true;button.textContent='Подключаемся к Notion…';
@@ -614,7 +634,7 @@ async function pollJob(){
  try{
   const j=await api('/api/jobs/'+localJob.id);if(!activeJob||activeJob.id!==j.id)return;
   if(j.status==='running'){const name=j.providerName||localJob.providerName||providerName(localJob.provider);showJob(localJob.kind==='legend'?`${name} раскрывает проекты, личный вклад и нагрузки…`:`${name} готовит резюме и проверяет параметры…`,false,localJob.studentId);setTimeout(pollJob,2000);return;}
-  let success=false,notionError=null;
+  let success=false,notionError=null,mapError=null;
   if(j.status==='done'){
    const s=students.find(x=>x.id===localJob.studentId);
    if(s){if(localJob.kind==='legend'){s.legend=j.result;s.legendSignature=localJob.signature;s.legendReady=true;currentLegendRulesVersion=j.result.rules_version||currentLegendRulesVersion;}else{s.result=j.result;s.resultSignature=localJob.signature;currentRulesVersion=j.result.rules_version||currentRulesVersion;}scheduleSave();if(localJob.batch||localJob.kind==='legend')await save();success=true;
@@ -622,10 +642,10 @@ async function pollJob(){
      const stored=savedStudents.find(x=>x.id===s.id);
      if(!stored?.legendReady||!same(stored.legend,s.legend))throw Error('Сначала дождитесь сохранения новой легенды на компьютере.');
      await publishGeneratedLegend(s.id);
-    }catch(e){notionError=e.message;if(localJob.batch&&generationBatch)generationBatch.notionFailed=(generationBatch.notionFailed||0)+1;}
+    }catch(e){const field=e.stage==='map'?'mapFailed':'notionFailed';if(e.stage==='map')mapError=e.message;else notionError=e.message;if(localJob.batch&&generationBatch)generationBatch[field]=(generationBatch[field]||0)+1;}
    }
-   const message=localJob.kind==='legend'?(notionError?'Легенда готова, но Notion не обновлён: '+notionError:'Легенда готова и отправлена в Notion. Проверь рассказ и предложенные детали.'):'Резюме готово. Проверь текст и вопросы ученику.';
-   showJob(message,Boolean(notionError),localJob.studentId);toast(notionError?message:localJob.kind==='legend'?'Легенда готова и отправлена в Notion':'Резюме готово');
+   const message=localJob.kind==='legend'?(notionError?'Легенда готова, но Notion не обновлён: '+notionError:mapError?'Легенда готова и отправлена в Notion, но карта не создана: '+mapError:'Легенда и карта готовы. Ссылка добавлена в Notion. Проверь рассказ и предложенные детали.'):'Резюме готово. Проверь текст и вопросы ученику.';
+   showJob(message,Boolean(notionError||mapError),localJob.studentId);toast(notionError||mapError?message:localJob.kind==='legend'?'Легенда и карта готовы в Notion':'Резюме готово');
   }else showJob(j.message,j.status==='error',localJob.studentId);
   activeJob=null;sessionStorage.removeItem('rezumator:job');$('#cancel').classList.add('hidden');renderStudents();renderReadiness();renderResult();
   const readyField=$('#formContent [data-field="legendReady"]');if(readyField)readyField.checked=current().legendReady===true;

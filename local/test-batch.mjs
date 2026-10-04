@@ -77,14 +77,59 @@ test('Очередь легенд берёт актуальное резюме �
 test('Только успешная легенда ставит галочку своему ученику; ошибка и отмена сохраняют старый результат',async()=>{
  const source=await readFile(new URL('./public/app.js',import.meta.url),'utf8');
  const poll=source.slice(source.indexOf('async function pollJob(){'),source.indexOf("$('#generate').onclick="));
- for(const scenario of ['done','error','cancelled','notion_error']){
-  const status=scenario==='notion_error'?'done':scenario;
+ for(const scenario of ['done','error','cancelled','notion_error','map_error']){
+  const status=['notion_error','map_error'].includes(scenario)?'done':scenario;
   const old={legend_text:'Старая легенда'},fresh={legend_text:'Новый рассказ',rules_version:'rules'};
   const values=[student('target',{legend:old,legendReady:false,resumeReady:true}),student('selected',{legendReady:false})];
   const noop=()=>{},saved=[],published=[];
-  const context={students:values,savedStudents:structuredClone(values),generationBatch:{running:true,notionFailed:0},same:(a,b)=>JSON.stringify(a)===JSON.stringify(b),publishGeneratedLegend:async id=>{published.push(id);assert.equal(context.savedStudents[0].legendReady,true);if(scenario==='notion_error')throw Error('Нет подключения Notion');},activeJob:{id:'job',studentId:'target',kind:'legend',signature:'stamp',batch:true},currentLegendRulesVersion:'',currentRulesVersion:'',sessionStorage:{removeItem:noop},$:()=>({classList:{add:noop}}),current:()=>values[1],api:async()=>({id:'job',status,result:status==='done'?fresh:null,message:'Остановлено'}),scheduleSave:noop,save:async()=>{saved.push(structuredClone(values));context.savedStudents=structuredClone(values);},showJob:noop,toast:noop,renderStudents:noop,renderReadiness:noop,renderResult:noop,renderBatchControls:noop,advanceGenerationBatch:success=>context.batchSuccess=success,setTimeout:noop};
+  const context={students:values,savedStudents:structuredClone(values),generationBatch:{running:true,notionFailed:0},same:(a,b)=>JSON.stringify(a)===JSON.stringify(b),publishGeneratedLegend:async id=>{published.push(id);assert.equal(context.savedStudents[0].legendReady,true);if(scenario==='notion_error')throw Error('Нет подключения Notion');if(scenario==='map_error')throw Object.assign(Error('Excalidraw недоступен'),{stage:'map'});},activeJob:{id:'job',studentId:'target',kind:'legend',signature:'stamp',batch:true},currentLegendRulesVersion:'',currentRulesVersion:'',sessionStorage:{removeItem:noop},$:()=>({classList:{add:noop}}),current:()=>values[1],api:async()=>({id:'job',status,result:status==='done'?fresh:null,message:'Остановлено'}),scheduleSave:noop,save:async()=>{saved.push(structuredClone(values));context.savedStudents=structuredClone(values);},showJob:noop,toast:noop,renderStudents:noop,renderReadiness:noop,renderResult:noop,renderBatchControls:noop,advanceGenerationBatch:success=>context.batchSuccess=success,setTimeout:noop};
   vm.createContext(context);await vm.runInContext(poll+'\npollJob()',context);
   assert.equal(values[0].legendReady,status==='done');assert.equal(values[0].legend,status==='done'?fresh:old);assert.equal(values[0].resumeReady,true);assert.equal(values[1].legendReady,false);
-  assert.equal(context.batchSuccess,status==='done');assert.equal(saved.length,status==='done'?1:0);if(status==='done')assert.equal(saved[0][0].legendReady,true);assert.deepEqual(published,status==='done'?['target']:[]);assert.equal(context.generationBatch.notionFailed,scenario==='notion_error'?1:0);
+  assert.equal(context.batchSuccess,status==='done');assert.equal(saved.length,status==='done'?1:0);if(status==='done')assert.equal(saved[0][0].legendReady,true);assert.deepEqual(published,status==='done'?['target']:[]);assert.equal(context.generationBatch.notionFailed,scenario==='notion_error'?1:0);assert.equal(context.generationBatch.mapFailed||0,scenario==='map_error'?1:0);
+ }
+});
+
+
+test('Генерация публикует карту только после подтверждённой легенды в Notion',async()=>{
+ const source=await readFile(new URL('./public/app.js',import.meta.url),'utf8');
+ const functions=source.slice(source.indexOf('async function publishGeneratedLegendMap('),source.indexOf('async function startNotionBatch('));
+ for(const scenario of ['done','notion_error','map_error','map_start_error']){
+  const calls=[],messages=[],noop=()=>{},url='https://excalidraw.com/#json=scene-id,AAAAAAAAAAAAAAAAAAAAAA';let mapPolls=0;
+  const context={autoNotionStudentId:null,notionEntries:{},notionContainer:null,notionWorkspaceName:'',legendMapEntries:{},renderNotion:noop,renderLegendMap:noop,showJob:(text,error,id)=>messages.push({text,id}),delay:async()=>{},safeLegendMapUrl:url=>url?.startsWith('https://excalidraw.com/#json=')?url:null,
+   waitNotionEntry:async id=>{calls.push('notion:confirmed:'+id);return {status:scenario==='notion_error'?'update_error':'done',message:'Notion недоступен'};},
+   api:async(route,options)=>{
+    calls.push(route+':'+(options?.method||'GET'));
+    if(route==='/api/notion/status')return {busy:false,entries:{},workspace:{name:'Test'}};
+    if(options?.body)assert.equal(JSON.parse(options.body).studentId,'target');
+    if(route==='/api/notion/legend')return {status:'updating'};
+    if(options?.method==='POST'){
+     if(scenario==='map_start_error')throw Error('Excalidraw занят');
+     return {status:'running',studentId:'target',pageId:'page'};
+    }
+    mapPolls++;return {entries:{target:{status:mapPolls===1?'running':scenario==='map_error'?'error':'done',pageId:'page',url,message:'Карта не создана'}}};
+   }};
+  vm.createContext(context);
+  if(scenario==='done'){
+   await vm.runInContext(functions+'\npublishGeneratedLegend("target")',context);
+   assert.equal(context.legendMapEntries.target.status,'done');assert.equal(context.legendMapEntries.target.url,url);
+   assert.deepEqual(calls,['/api/notion/status:GET','/api/notion/legend:POST','notion:confirmed:target','/api/legend/maps:POST','/api/legend/maps:GET','/api/legend/maps:GET']);
+  }else{
+   await assert.rejects(vm.runInContext(functions+'\npublishGeneratedLegend("target")',context),error=>scenario==='notion_error'?error.message==='Notion недоступен'&&!error.stage:error.stage==='map');
+   if(scenario==='notion_error')assert.equal(calls.some(c=>c.includes('/api/legend/maps')),false);
+  }
+  assert.equal(context.autoNotionStudentId,null);assert.ok(messages.every(m=>m.id==='target'));
+ }
+});
+
+test('Очередь не переходит к следующему ученику до завершения публикации карты',async()=>{
+ const source=await readFile(new URL('./public/app.js',import.meta.url),'utf8');
+ const poll=source.slice(source.indexOf('async function pollJob(){'),source.indexOf("$('#generate').onclick="));
+ for(const batch of [false,true]){
+  const values=[student('target')],noop=()=>{};let release;
+  const publication=new Promise(resolve=>{release=resolve;});
+  const events=[],context={students:values,savedStudents:structuredClone(values),generationBatch:{running:true},same:(a,b)=>JSON.stringify(a)===JSON.stringify(b),publishGeneratedLegend:async()=>{events.push('publish');await publication;events.push('map-confirmed');},activeJob:{id:'job',studentId:'target',kind:'legend',signature:'stamp',batch},currentLegendRulesVersion:'',currentRulesVersion:'',sessionStorage:{removeItem:noop},$:()=>({classList:{add:noop}}),current:()=>values[0],api:async()=>({id:'job',status:'done',result:{legend_text:'Текст'}}),scheduleSave:noop,save:async()=>{context.savedStudents=structuredClone(values);events.push('saved');},showJob:noop,toast:noop,renderStudents:noop,renderReadiness:noop,renderResult:noop,renderBatchControls:noop,advanceGenerationBatch:()=>events.push('advance'),setTimeout:noop};
+  vm.createContext(context);const pending=vm.runInContext(poll+'\npollJob()',context);
+  await new Promise(resolve=>setImmediate(resolve));assert.deepEqual(events,['saved','publish']);assert.equal(context.activeJob.id,'job');assert.equal(values[0].legendReady,true);
+  release();await pending;assert.deepEqual(events,batch?['saved','publish','map-confirmed','advance']:['saved','publish','map-confirmed']);assert.equal(context.activeJob,null);
  }
 });
