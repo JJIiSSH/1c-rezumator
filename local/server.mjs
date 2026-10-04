@@ -185,6 +185,13 @@ const server=http.createServer(async(req,res)=>{try{
  if(url.pathname==='/api/legend/maps'&&req.method==='GET'){json(res,200,legendMaps.status(notionExports));return;}
  if(url.pathname==='/api/legend/maps'&&req.method==='POST'){if(connectionBusy||legendMaps.busy)throw Error('Дождитесь проверки подключения.');const {studentId}=JSON.parse((await body(req)).toString());const student=state.find(s=>s.id===studentId);if(!student)throw Error('Ученик не найден');json(res,202,await legendMaps.start(student,notionExports));return;}
  if(url.pathname==='/api/notion/status'&&req.method==='GET'){json(res,200,notionExports.status());return;}
+ if(url.pathname==='/api/notion/legend'&&req.method==='POST'){
+  if(desktop&&!connectionSettings.notionWorkspaceId)throw Error('Укажите своё пространство Notion в разделе «Подключения».');
+  if(connectionBusy||legendMaps.busy)throw Error('Дождитесь проверки подключения или обновления карты.');
+  const {studentId}=JSON.parse((await body(req)).toString()),student=state.find(s=>s.id===studentId);
+  if(!student)throw Error('Ученик не найден');
+  json(res,202,await notionExports.syncLegend(student));return;
+ }
  if(url.pathname==='/api/notion/pages'&&req.method==='POST'){if(desktop&&!connectionSettings.notionWorkspaceId)throw Error('Укажите ID своего пространства Notion в разделе «Подключения» и проверьте подключение.');if(connectionBusy||legendMaps.busy)throw Error('Дождитесь проверки подключения.');const student=JSON.parse((await body(req)).toString());if(!state.some(s=>s.id===student.id))throw new Error('Ученик не найден');json(res,202,await notionExports.start(student));return;}
  if(url.pathname==='/api/notion/pages/update'&&req.method==='POST'){if(connectionBusy||legendMaps.busy)throw Error('Дождитесь проверки подключения.');const student=JSON.parse((await body(req)).toString());if(!state.some(s=>s.id===student.id))throw new Error('Ученик не найден');if(student.replaceNotionLegend!==undefined&&typeof student.replaceNotionLegend!=='boolean')throw Error('Некорректный выбор замены легенды');json(res,202,await notionExports.update(student,{replaceLegend:student.replaceNotionLegend===true}));return;}
  if(url.pathname==='/api/state'&&req.method==='GET'){json(res,200,state);return;}

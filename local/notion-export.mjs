@@ -38,6 +38,19 @@ export function protectNotionLegend(page,previous,{replaceLegend=false}={}){
  const newResume=(localLegend<0?page.content:page.content.slice(0,localLegend)).trimEnd();
  return {...page,content:newResume+'\n\n'+content.slice(index).trimEnd(),contentUpdates:[{old_str:oldResume,new_str:newResume,replace_all_matches:false}],legendPreserved:true};
 }
+export function replaceNotionLegendOnly(page,previous){
+ const content=previous.text.match(/<content>\n?([\s\S]*)\n?<\/content>/)?.[1]??previous.text;
+ const heading=/^#{1,6}[ \t]+(?!Карта\b)[^\n]*легенд(?:а|ы)(?=[ \t{:]|$)[^\n]*$/im;
+ if(!content.trim())throw Error('Страница Notion пуста. Не удалось определить блок для обновления легенды.');
+ const newStart=page.content.search(/^# Легенда для собеседования$/m);
+ if(newStart<0)throw Error('Нет новой легенды для отправки в Notion.');
+ const replacement=page.content.slice(newStart).trimEnd(),start=content.search(heading);
+ if(start<0)return {...page,content:content.trimEnd()+'\n\n'+replacement,contentUpdates:[{old_str:content,new_str:content.trimEnd()+'\n\n'+replacement,replace_all_matches:false}],legendOnly:true};
+ const mapStart=content.slice(start).search(/^## Карта легенды в Excalidraw[^\n]*$/m);
+ const end=mapStart<0?content.length:start+mapStart;
+ const old=content.slice(start,end).trimEnd(),updated=content.slice(0,start)+replacement+content.slice(start+old.length);
+ return {...page,content:updated,contentUpdates:[{old_str:old,new_str:replacement,replace_all_matches:false}],legendOnly:true};
+}
 export function studentHubPage(s){
  const title=escapeNotion(s.name||s.telegram||'Ученик');
  return {properties:{title},icon:'💻',content:'## Точка A\n- List\n\n## Точка B\n- List\n\n# Занятия с ментором/HR {color="green_bg"}'};
@@ -62,7 +75,7 @@ export class NotionExports {
   for(const e of Object.values(this.entries))if(e.status==='updating'){e.status='update_error';e.message='Обновление было прервано. Проверьте страницу; повтор обновит тот же адрес.';}
  }
  save(){const data=JSON.stringify({...this.entries,...(this.container?{__container:this.container}:{})},null,2);this.saveQueue=this.saveQueue.catch(()=>{}).then(async()=>{await writeFile(this.file+'.tmp',data,{mode:0o600});await rename(this.file+'.tmp',this.file);});return this.saveQueue;}
- status(){return {workspace:this.workspace,container:this.container,entries:this.entries};}
+ status(){return {workspace:this.workspace,container:this.container,entries:this.entries,busy:this.busy};}
  async ensureContainer(){
   if(this.container?.pageId&&notionPageUrl(this.container.url))return this.container;
   if(this.container?.status==='uncertain')throw new Error(this.container.message);
@@ -84,8 +97,16 @@ export class NotionExports {
   try{await this.save();}catch(e){delete this.entries[student.id];this.busy=false;throw e;}
   this.run(student,page,entry);return entry;
  }
- async update(student,{replaceLegend=false}={}){
-  if(replaceLegend&&!student.legend?.legend_text?.trim())throw Error('Сначала создайте легенду в резюматоре, чтобы заменить ею легенду Notion.');
+ async syncLegend(student){
+  if(!student.legend?.legend_text?.trim())throw Error('Сначала создайте легенду.');
+  if(this.busy)throw Error('Дождитесь завершения текущего экспорта или карты в Notion.');
+  const entry=this.entries[student.id];
+  if(entry?.pageId&&notionPageUrl(entry.url))return this.update(student,{legendOnly:true});
+  if(entry&&['done','creating','uncertain','updating','update_error'].includes(entry.status))throw Error(entry.message||'Не удалось подтвердить прежнюю страницу Notion. Повторное создание отключено, чтобы не создать дубль.');
+  return this.start(student);
+ }
+ async update(student,{replaceLegend=false,legendOnly=false}={}){
+  if((replaceLegend||legendOnly)&&!student.legend?.legend_text?.trim())throw Error('Сначала создайте легенду в резюматоре, чтобы заменить ею легенду Notion.');
   const page=notionPage(student),entry=this.entries[student.id];
   if(!entry?.pageId||!notionPageUrl(entry.url))throw new Error('Сначала создайте страницу этого ученика в Notion.');
   if(entry.status==='updating')return entry;
@@ -93,7 +114,7 @@ export class NotionExports {
   const previous={...entry};this.busy=true;
   entry.status='updating';entry.message='Подключаемся для обновления страницы…';
   try{await this.save();}catch(e){Object.assign(entry,previous);this.busy=false;throw e;}
-  this.runUpdate(page,entry,{replaceLegend});return entry;
+  this.runUpdate(page,entry,{replaceLegend,legendOnly});return entry;
  }
  async runUpdate(page,entry,options){
   try{
@@ -103,10 +124,10 @@ export class NotionExports {
    const backups=path.join(path.dirname(this.file),'notion-backups');await mkdir(backups,{recursive:true});
    const backup=path.join(backups,createHash('sha256').update(entry.pageId).digest('hex').slice(0,16)+'-'+Date.now()+'.json');
    await writeFile(backup,JSON.stringify(previous,null,2),{mode:0o600,flag:'wx'});
-   const updatedPage=protectNotionLegend(page,previous,options);
+   const updatedPage=options.legendOnly?replaceNotionLegendOnly(page,previous):protectNotionLegend(page,previous,options);
    entry.message='Обновляем существующую страницу в Notion…';
    await this.client.updatePage(entry.pageId,updatedPage);
-   Object.assign(entry,{status:'done',title:page.properties.title,message:updatedPage.legendPreserved?'Резюме обновлено. Легенда в Notion сохранена.':'Страница обновлена в Notion.',updatedAt:new Date().toISOString(),contentHash:createHash('sha256').update(JSON.stringify({properties:page.properties,content:updatedPage.content})).digest('hex')});
+   Object.assign(entry,{status:'done',title:page.properties.title,message:updatedPage.legendOnly?'Легенда обновлена в Notion.':updatedPage.legendPreserved?'Резюме обновлено. Легенда в Notion сохранена.':'Страница обновлена в Notion.',updatedAt:new Date().toISOString(),contentHash:createHash('sha256').update(JSON.stringify({properties:page.properties,content:updatedPage.content})).digest('hex')});
   }catch(error){entry.status='update_error';entry.message=error.message+' Ссылка сохранена. Можно повторить обновление той же страницы.';}
   finally{try{await this.save();}catch{entry.message+=' Не удалось сохранить статус на компьютере.';}this.busy=false;}
  }

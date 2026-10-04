@@ -61,3 +61,14 @@ test('Ошибка второго этапа и неверная среда не
   assert.equal((await readFile(f.calls,'utf8')).trim().split('\n').filter(Boolean).length,mode==='bad-plan'?1:2);
  }assert.deepEqual(JSON.parse(await readFile(path.join(f.data,'students.json'),'utf8')),[student]);
 });
+
+
+test('Автоматическая отправка легенды принимает только сохранённого ученика с легендой',async t=>{
+ const f=await fixture(t);
+ assert.equal((await f.request('/api/notion/legend',{studentId:'unknown'})).status,400);
+ const current=(await f.request('/api/state')).data[0];
+ assert.equal((await f.request('/api/state/changes',[{id:current.id,fields:{legend:{before:current.legend,value:null}}}])).status,200);
+ const sent=await f.request('/api/notion/legend',{studentId:current.id,legend:result});
+ assert.equal(sent.status,400);assert.match(sent.data.error,/создайте легенду/);
+ assert.equal((await f.request('/api/notion/status')).data.entries[current.id],undefined);
+});

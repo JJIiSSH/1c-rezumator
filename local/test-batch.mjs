@@ -77,13 +77,14 @@ test('Очередь легенд берёт актуальное резюме �
 test('Только успешная легенда ставит галочку своему ученику; ошибка и отмена сохраняют старый результат',async()=>{
  const source=await readFile(new URL('./public/app.js',import.meta.url),'utf8');
  const poll=source.slice(source.indexOf('async function pollJob(){'),source.indexOf("$('#generate').onclick="));
- for(const status of ['done','error','cancelled']){
+ for(const scenario of ['done','error','cancelled','notion_error']){
+  const status=scenario==='notion_error'?'done':scenario;
   const old={legend_text:'Старая легенда'},fresh={legend_text:'Новый рассказ',rules_version:'rules'};
   const values=[student('target',{legend:old,legendReady:false,resumeReady:true}),student('selected',{legendReady:false})];
-  const noop=()=>{},saved=[];
-  const context={students:values,activeJob:{id:'job',studentId:'target',kind:'legend',signature:'stamp',batch:true},currentLegendRulesVersion:'',currentRulesVersion:'',sessionStorage:{removeItem:noop},$:()=>({classList:{add:noop}}),current:()=>values[1],api:async()=>({id:'job',status,result:status==='done'?fresh:null,message:'Остановлено'}),scheduleSave:noop,save:async()=>saved.push(structuredClone(values)),showJob:noop,toast:noop,renderStudents:noop,renderReadiness:noop,renderResult:noop,renderBatchControls:noop,advanceGenerationBatch:success=>context.batchSuccess=success,setTimeout:noop};
+  const noop=()=>{},saved=[],published=[];
+  const context={students:values,savedStudents:structuredClone(values),generationBatch:{running:true,notionFailed:0},same:(a,b)=>JSON.stringify(a)===JSON.stringify(b),publishGeneratedLegend:async id=>{published.push(id);assert.equal(context.savedStudents[0].legendReady,true);if(scenario==='notion_error')throw Error('Нет подключения Notion');},activeJob:{id:'job',studentId:'target',kind:'legend',signature:'stamp',batch:true},currentLegendRulesVersion:'',currentRulesVersion:'',sessionStorage:{removeItem:noop},$:()=>({classList:{add:noop}}),current:()=>values[1],api:async()=>({id:'job',status,result:status==='done'?fresh:null,message:'Остановлено'}),scheduleSave:noop,save:async()=>{saved.push(structuredClone(values));context.savedStudents=structuredClone(values);},showJob:noop,toast:noop,renderStudents:noop,renderReadiness:noop,renderResult:noop,renderBatchControls:noop,advanceGenerationBatch:success=>context.batchSuccess=success,setTimeout:noop};
   vm.createContext(context);await vm.runInContext(poll+'\npollJob()',context);
   assert.equal(values[0].legendReady,status==='done');assert.equal(values[0].legend,status==='done'?fresh:old);assert.equal(values[0].resumeReady,true);assert.equal(values[1].legendReady,false);
-  assert.equal(context.batchSuccess,status==='done');assert.equal(saved.length,status==='done'?1:0);if(status==='done')assert.equal(saved[0][0].legendReady,true);
+  assert.equal(context.batchSuccess,status==='done');assert.equal(saved.length,status==='done'?1:0);if(status==='done')assert.equal(saved[0][0].legendReady,true);assert.deepEqual(published,status==='done'?['target']:[]);assert.equal(context.generationBatch.notionFailed,scenario==='notion_error'?1:0);
  }
 });

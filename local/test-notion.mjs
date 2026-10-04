@@ -151,3 +151,32 @@ test('Обрезанная страница не перезаписываетс�
  const service=await fixture(t,{connect:async()=>{},fetchPage:async()=>({metadata:{type:'page'},text:'Обрезанный текст',truncated:true}),updatePage:()=>assert.fail('Не перезаписывать')});service.entries.s1={studentId:'s1',...createdPage(reply),status:'done'};
  await service.update(student);await settled(service);assert.equal(service.entries.s1.status,'update_error');
 });
+
+
+test('Автоматическая отправка меняет только легенду существующей страницы и сохраняет ручное резюме',async t=>{
+ const {replaceNotionLegendOnly}=await import('./notion-export.mjs');
+ const previous={metadata:{type:'page'},text:'# Резюме\nРучной текст в Notion\n\n# Легенда для собеседования\nАвторская старая легенда\n\n## Карта легенды в Excalidraw\n[Старая карта](https://excalidraw.com/)'};
+ const page=notionPage(student),updated=replaceNotionLegendOnly(page,previous);
+ assert.ok(updated.content.startsWith('# Резюме\nРучной текст в Notion'));assert.ok(updated.content.includes('Текущая легенда'));assert.ok(updated.content.includes('## Карта легенды в Excalidraw'));
+ assert.equal(updated.contentUpdates[0].old_str,'# Легенда для собеседования\nАвторская старая легенда');assert.ok(!updated.contentUpdates[0].new_str.includes(student.result.resume_text));
+ let writes=0;
+ const client={connect:async()=>{},fetchPage:async()=>previous,updatePage:async(id,data)=>{assert.equal(id,'123');assert.deepEqual(data.contentUpdates,updated.contentUpdates);writes++;},createPage:()=>assert.fail('Не создавать новую страницу')};
+ const service=await fixture(t,client);service.entries.s1={studentId:'s1',...createdPage(reply),status:'done'};
+ await service.syncLegend(student);await settled(service);
+ assert.equal(writes,1);assert.equal(service.entries.s1.status,'done');assert.equal(service.entries.s1.url,reply.pages[0].url);assert.match(service.entries.s1.message,/Легенда обновлена/);
+});
+
+test('Легенда добавляется на страницу без раздела легенды, не заменяя резюме',async()=>{
+ const {replaceNotionLegendOnly}=await import('./notion-export.mjs');
+ const old='# Резюме\nРучные правки и контакты',updated=replaceNotionLegendOnly(notionPage(student),{text:old});
+ assert.ok(updated.content.startsWith(old+'\n\n# Легенда'));assert.equal(updated.contentUpdates[0].old_str,old);
+});
+
+test('Автоматическая отправка создаёт недостающую страницу, а неопределённый исход не создаёт дубль',async t=>{
+ let creations=0;
+ const client={connect:async()=>{},createPage:async(page,parent)=>{creations++;return parent.page_id==='folder-1'?{pages:[{id:'hub-new',url:'https://www.notion.so/hub-new'}]}:reply;},insertPageContent:async()=>{}};
+ const service=await fixture(t,client);await service.syncLegend(student);await settled(service);assert.equal(creations,2);
+ const uncertain=await fixture(t,{createPage:()=>assert.fail('Нельзя повторять создание')});uncertain.entries.s1={studentId:'s1',status:'uncertain',message:'Не удалось подтвердить создание'};
+ await assert.rejects(uncertain.syncLegend(student),/подтвердить/);assert.equal(uncertain.entries.s1.status,'uncertain');
+ await assert.rejects(uncertain.syncLegend({...student,legend:null}),/создайте легенду/);
+});

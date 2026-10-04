@@ -5,7 +5,7 @@ import {batchResumeEligible,batchLegendEligible,studentsMissingResume,studentsWi
 const $=s=>document.querySelector(s);
 const escape=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 let students=[],selected='',tab='questionnaire',token='',currentRulesVersion='',currentLegendRulesVersion='',resultView='resume',generationStarting=false,connected=false,activeJob=null,saveTimer=null,toastTimer=null;
-let notionEntries={},notionContainer=null,notionTimer=null,notionWorkspaceName='',generationBatch=null,notionBatch=null;
+let notionEntries={},notionContainer=null,notionTimer=null,notionWorkspaceName='',generationBatch=null,notionBatch=null,autoNotionStudentId=null;
 const jobMessages=new Map();
 let startingStudentId=null;
 let savedStudents=[],saving=false,syncing=false,statePoll=null,loaded=false;
@@ -326,7 +326,7 @@ function renderBatchControls(){
  const missing=studentsMissingResume(students).length,notReady=studentsWithoutReadyResume(students).length,legends=studentsWithoutReadyLegend(students).length,pending=studentsPendingNotion(students,notionEntries).length;
  generate.textContent=`Сгенерировать всем без резюме · ${missing}`;
  generateNotReady.textContent=`Сгенерировать без галочки «Готово» · ${notReady}`;
- generateLegends.textContent=`Сгенерировать легенды без готовности · ${legends}`;
+ generateLegends.textContent=`Сгенерировать легенды всем без галочки «Легенда готова» · ${legends}`;
  if(generationBatch?.running){
   const current=Math.min(generationBatch.completed+generationBatch.failed+1,generationBatch.total);
   const activeButton=generationBatch.kind==='legend'?generateLegends:generationBatch.mode==='not_ready'?generateNotReady:generate;
@@ -341,9 +341,11 @@ function advanceGenerationBatch(success){
  if(!generationBatch)return;
  const stopped=!generationBatch.running;
  if(success)generationBatch.completed++;else if(!stopped)generationBatch.failed++;
- generationBatch.currentId=null;generationBatch.message=`Готово ${generationBatch.completed} из ${generationBatch.total}${generationBatch.failed?`, ошибок: ${generationBatch.failed}`:''}`;
+ const notionErrors=generationBatch.notionFailed?` Ошибок отправки в Notion: ${generationBatch.notionFailed}.`:'';
+ generationBatch.currentId=null;generationBatch.message=`Готово ${generationBatch.completed} из ${generationBatch.total}${generationBatch.failed?`, ошибок: ${generationBatch.failed}`:''}${notionErrors}`;
  if(!generationBatch.running||!generationBatch.queue.length){
   generationBatch.running=false;generationBatch.message=stopped?`Массовая генерация остановлена. Готово: ${generationBatch.completed}.`:`Массовая генерация завершена: ${generationBatch.completed} готово${generationBatch.failed?`, ${generationBatch.failed} с ошибкой`:''}.`;
+  generationBatch.message+=notionErrors;
   saveGenerationBatch();renderBatchControls();toast(generationBatch.message);return;
  }
  saveGenerationBatch();renderBatchControls();setTimeout(startNextGenerationBatch,250);
@@ -373,7 +375,7 @@ async function startGenerationBatch(mode='missing',kind='resume'){
  if(activeJob||generationStarting||generationBatch?.running||notionBatch?.running)return;
  const queue=(kind==='legend'?studentsWithoutReadyLegend(students):mode==='not_ready'?studentsWithoutReadyResume(students):studentsMissingResume(students)).map(s=>s.id);
  if(!queue.length){toast(kind==='legend'?'Нет учеников с резюме без галочки «Легенда готова».':mode==='not_ready'?'У всех заполненных учеников есть галочка «Резюме готово».':'У всех заполненных учеников уже есть резюме.');renderBatchControls();return;}
- generationBatch={running:true,kind,mode,queue,total:queue.length,completed:0,failed:0,currentId:null,message:`В очереди: ${queue.length}`};saveGenerationBatch();renderBatchControls();startNextGenerationBatch();
+ generationBatch={running:true,kind,mode,queue,total:queue.length,completed:0,failed:0,notionFailed:0,currentId:null,message:`В очереди: ${queue.length}`};saveGenerationBatch();renderBatchControls();startNextGenerationBatch();
 }
 async function stopGenerationBatch(){
  if(!generationBatch?.running)return;
@@ -390,6 +392,25 @@ async function waitNotionEntry(studentId){
  }
  throw new Error('Notion не завершил экспорт за 6 минут. Повтор не запущен, чтобы не создать дубль.');
 }
+async function publishGeneratedLegend(studentId){
+ autoNotionStudentId=studentId;renderNotion();
+ showJob('Легенда готова. Отправляем в Notion…',false,studentId);
+ try{
+  let available=false;
+  for(let i=0;i<240;i++){
+   const state=await api('/api/notion/status');notionEntries=state.entries;notionContainer=state.container||notionContainer;notionWorkspaceName=state.workspace?.name||notionWorkspaceName;
+   if(!state.busy){available=true;break;}
+   await delay(1500);
+  }
+  if(!available)throw Error('Notion занят другим экспортом. Легенда сохранена локально.');
+  const entry=await api('/api/notion/legend',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({studentId})});
+  notionEntries[studentId]=entry;renderNotion();
+  const done=['creating','updating'].includes(entry.status)?await waitNotionEntry(studentId):entry;
+  if(done.status!=='done')throw Error(done.message||'Не удалось отправить легенду в Notion.');
+  return done;
+ }finally{autoNotionStudentId=null;renderNotion();}
+}
+
 async function startNotionBatch(){
  if(notionBatch?.running||activeJob||generationStarting||generationBatch?.running)return;
  await save();if(saving||studentChanges(savedStudents,students).length){toast('Сначала дождитесь сохранения анкет.');return;}
@@ -538,7 +559,7 @@ let legendMapEntries={},legendMapTimer;
 function safeLegendMapUrl(value){try{const u=new URL(value);return u.origin==='https://excalidraw.com'&&u.pathname==='/'&&/^#json=[a-zA-Z0-9_-]+,[a-zA-Z0-9_-]{22}$/.test(u.hash)?u.href:null;}catch{return null;}}
 function renderLegendMap(){
  const container=$('#legendMap');if(!container)return;const s=current(),entry=legendMapEntries[s.id],url=safeLegendMapUrl(entry?.url),busy=entry?.status==='running';
- container.innerHTML=`<div class="result-actions"><button class="secondary-button" id="createLegendMap" ${busy?'disabled':''}>${busy?'Создаём карту…':url?'Обновить карту в Excalidraw':'Создать карту в Excalidraw'}</button>${url?`<a class="secondary-button" href="${escape(url)}" target="_blank" rel="noopener noreferrer">Открыть карту легенды ↗</a>`:''}</div><small>Из актуальной легенды на странице Notion. Ссылка на карту появится там же.</small><p class="notion-status ${entry?.status==='error'?'error':''}" role="status">${escape(entry?.message||'')}</p>`;
+ container.innerHTML=`<div class="result-actions"><button class="secondary-button" id="createLegendMap" ${busy||autoNotionStudentId?'disabled':''}>${busy?'Создаём карту…':url?'Обновить карту в Excalidraw':'Создать карту в Excalidraw'}</button>${url?`<a class="secondary-button" href="${escape(url)}" target="_blank" rel="noopener noreferrer">Открыть карту легенды ↗</a>`:''}</div><small>Из актуальной легенды на странице Notion. Ссылка на карту появится там же.</small><p class="notion-status ${entry?.status==='error'?'error':''}" role="status">${escape(entry?.message||'')}</p>`;
  $('#createLegendMap').onclick=async()=>{const studentId=current().id;$('#createLegendMap').disabled=true;try{legendMapEntries[studentId]=await api('/api/legend/maps',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({studentId})});renderLegendMap();scheduleLegendMapPoll();}catch(e){toast(e.message);renderLegendMap();}};
 }
 function scheduleLegendMapPoll(){clearTimeout(legendMapTimer);legendMapTimer=setTimeout(refreshLegendMaps,2000);}
@@ -546,11 +567,11 @@ async function refreshLegendMaps(){try{const result=await api('/api/legend/maps'
 function renderNotion(){
  const container=$('#notionExport');if(!container)return;
  const s=current(),entry=notionEntries[s.id],url=safeNotionUrl(entry?.url),busy=['creating','updating'].includes(entry?.status),uncertain=entry?.status==='uncertain';
- const existing=Boolean(entry?.pageId&&url),batchBusy=Boolean(notionBatch?.running);
+ const existing=Boolean(entry?.pageId&&url),batchBusy=Boolean(notionBatch?.running||autoNotionStudentId);
  const link=url?`<a class="secondary-button notion-link" href="${escape(url)}" target="_blank" rel="noopener noreferrer">Открыть резюме в NOTION ↗</a>`:'';
  const hubUrl=safeNotionUrl(entry?.hubUrl),hubLink=hubUrl?`<a class="secondary-button notion-link" href="${escape(hubUrl)}" target="_blank" rel="noopener noreferrer">Открыть страницу ученика ↗</a>`:'';
  const folderUrl=safeNotionUrl(notionContainer?.url),folderLink=folderUrl?`<a class="secondary-button notion-link" href="${escape(folderUrl)}" target="_blank" rel="noopener noreferrer">Открыть папку резюме ↗</a>`:'';
- container.innerHTML=`<div class="result-actions">${hubLink}${link}${folderLink}<button class="secondary-button" id="writeNotion" ${busy||uncertain||batchBusy?'disabled':''}>${batchBusy?'Идёт массовый экспорт…':busy?(existing?'Обновляем страницу…':'Создаём страницу…'):(existing?'Обновить страницу в NOTION':'Создать страницу в NOTION')}</button></div>${existing?'<label class="check-label"><input type="checkbox" id="replaceNotionLegend"> Заменить легенду в Notion текущей легендой резюматора</label>':''}<small>${existing?'Обновит резюме. Существующая легенда в Notion сохраняется, пока вы явно не выберете её замену. Проверки остаются в резюматоре. Прежняя версия сохраняется на компьютере.':escape(notionWorkspaceName||'Ваше пространство Notion')+' · Папка «Резюме учеников» · Резюме и легенда, если она есть'}</small><div id="legendMap"></div><p class="notion-status ${entry?.status==='error'||entry?.status==='update_error'||uncertain?'error':''}" role="status">${escape(entry?.message||'')}</p>`;
+ container.innerHTML=`<div class="result-actions">${hubLink}${link}${folderLink}<button class="secondary-button" id="writeNotion" ${busy||uncertain||batchBusy?'disabled':''}>${autoNotionStudentId===s.id?'Отправляем легенду в Notion…':autoNotionStudentId?'Notion занят отправкой другой легенды…':batchBusy?'Идёт массовый экспорт…':busy?(existing?'Обновляем страницу…':'Создаём страницу…'):(existing?'Обновить страницу в NOTION':'Создать страницу в NOTION')}</button></div>${existing?'<label class="check-label"><input type="checkbox" id="replaceNotionLegend"> Заменить легенду в Notion текущей легендой резюматора</label>':''}<small>${existing?'Обновит резюме. Существующая легенда в Notion сохраняется, пока вы явно не выберете её замену. После новой генерации легенда обновляется автоматически. Проверки остаются в резюматоре. Прежняя версия сохраняется на компьютере.':escape(notionWorkspaceName||'Ваше пространство Notion')+' · Папка «Резюме учеников» · Резюме и легенда, если она есть'}</small><div id="legendMap"></div><p class="notion-status ${entry?.status==='error'||entry?.status==='update_error'||uncertain?'error':''}" role="status">${escape(entry?.message||'')}</p>`;
  renderLegendMap();
  $('#writeNotion').onclick=async()=>{
   const snapshot=structuredClone(current());if(existing)snapshot.replaceNotionLegend=$('#replaceNotionLegend')?.checked===true;const button=$('#writeNotion');button.disabled=true;button.textContent='Подключаемся к Notion…';
@@ -593,11 +614,18 @@ async function pollJob(){
  try{
   const j=await api('/api/jobs/'+localJob.id);if(!activeJob||activeJob.id!==j.id)return;
   if(j.status==='running'){const name=j.providerName||localJob.providerName||providerName(localJob.provider);showJob(localJob.kind==='legend'?`${name} раскрывает проекты, личный вклад и нагрузки…`:`${name} готовит резюме и проверяет параметры…`,false,localJob.studentId);setTimeout(pollJob,2000);return;}
-  let success=false;
+  let success=false,notionError=null;
   if(j.status==='done'){
    const s=students.find(x=>x.id===localJob.studentId);
-   if(s){if(localJob.kind==='legend'){s.legend=j.result;s.legendSignature=localJob.signature;s.legendReady=true;currentLegendRulesVersion=j.result.rules_version||currentLegendRulesVersion;}else{s.result=j.result;s.resultSignature=localJob.signature;currentRulesVersion=j.result.rules_version||currentRulesVersion;}scheduleSave();if(localJob.batch)await save();success=true;}
-   showJob(localJob.kind==='legend'?'Легенда готова. Проверь рассказ и предложенные детали.':'Резюме готово. Проверь текст и вопросы ученику.',false,localJob.studentId);toast(localJob.kind==='legend'?'Легенда готова':'Резюме готово');
+   if(s){if(localJob.kind==='legend'){s.legend=j.result;s.legendSignature=localJob.signature;s.legendReady=true;currentLegendRulesVersion=j.result.rules_version||currentLegendRulesVersion;}else{s.result=j.result;s.resultSignature=localJob.signature;currentRulesVersion=j.result.rules_version||currentRulesVersion;}scheduleSave();if(localJob.batch||localJob.kind==='legend')await save();success=true;
+    if(localJob.kind==='legend')try{
+     const stored=savedStudents.find(x=>x.id===s.id);
+     if(!stored?.legendReady||!same(stored.legend,s.legend))throw Error('Сначала дождитесь сохранения новой легенды на компьютере.');
+     await publishGeneratedLegend(s.id);
+    }catch(e){notionError=e.message;if(localJob.batch&&generationBatch)generationBatch.notionFailed=(generationBatch.notionFailed||0)+1;}
+   }
+   const message=localJob.kind==='legend'?(notionError?'Легенда готова, но Notion не обновлён: '+notionError:'Легенда готова и отправлена в Notion. Проверь рассказ и предложенные детали.'):'Резюме готово. Проверь текст и вопросы ученику.';
+   showJob(message,Boolean(notionError),localJob.studentId);toast(notionError?message:localJob.kind==='legend'?'Легенда готова и отправлена в Notion':'Резюме готово');
   }else showJob(j.message,j.status==='error',localJob.studentId);
   activeJob=null;sessionStorage.removeItem('rezumator:job');$('#cancel').classList.add('hidden');renderStudents();renderReadiness();renderResult();
   const readyField=$('#formContent [data-field="legendReady"]');if(readyField)readyField.checked=current().legendReady===true;
