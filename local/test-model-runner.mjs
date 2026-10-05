@@ -16,6 +16,8 @@ test('Квота, частота запросов, размер контекст
   ['HTTP 401 Unauthorized','GENERATION_AUTH'],
   ['HTTP 403 permission denied','GENERATION_ACCESS'],
   ['server_is_overloaded HTTP 503','GENERATION_SERVICE'],
+  [{message:'Selected model is at capacity. Please try a different model.'},'GENERATION_SERVICE'],
+  [{code:'server_overloaded'},'GENERATION_SERVICE'],
   ['usage statistics: retry_limit configured; unexpected response','GENERATION_FAILED'],
   ['output_limit configured; invalid schema','GENERATION_FAILED']
  ];
@@ -23,6 +25,7 @@ test('Квота, частота запросов, размер контекст
  assert.equal(generationError({code:'secret=value'},'openai').providerCode,undefined);
  assert.equal(generationError({code:'rate_limit_exceeded'},'anthropic').providerCode,'rate_limit_exceeded');
  assert.match(generationError({code:'rate_limit_exceeded'},'anthropic').message,/Claude/);
+ assert.match(generationError({message:'Selected model is at capacity. Please try a different model.'},'openai').message,/Выберите другую модель/);
 });
 
 async function fixture(t,{events=[],stderr='',exit=0,claudeResponse}){

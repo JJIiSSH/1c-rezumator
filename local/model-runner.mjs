@@ -18,8 +18,8 @@ export function generationError(input,provider){
   code='GENERATION_AUTH';message=`Нужно обновить вход в ${name}.`;
  }else if(/permission_denied|access_denied|model_not_found|not authorized|(?:HTTP|status(?:_code)?|statusCode)[\s"':=]*403\b/i.test(text)){
   code='GENERATION_ACCESS';message=`${name} не разрешил этот запрос. Проверьте доступ к выбранной модели.`;
- }else if(/server_is_overloaded|overloaded|service_unavailable|internal_server_error|(?:HTTP|status(?:_code)?|statusCode)[\s"':=]*50[0234]\b/i.test(text)){
-  code='GENERATION_SERVICE';message=`${name} временно недоступен. Повторите позже.`;
+ }else if(/selected model is at capacity|model.{0,25}(?:at|over) capacity|server_is_overloaded|server_overloaded|overloaded|service_unavailable|internal_server_error|(?:HTTP|status(?:_code)?|statusCode)[\s"':=]*50[0234]\b/i.test(text)){
+  code='GENERATION_SERVICE';message=/model.{0,25}(?:at|over) capacity/i.test(text)?`Выбранная модель ${name} сейчас перегружена. Выберите другую модель или повторите позже. Это не означает исчерпание лимитов подписки.`:`${name} временно недоступен. Повторите позже.`;
  }else if(/stream.{0,35}(?:disconnected|closed|error|failed)|connection|network|dns|timed? ?out|ECONN|ENOTFOUND|retry limit|retry budget|max(?:imum)? retries/i.test(text)){
   code='GENERATION_CONNECTION';message=`Соединение с ${name} прервалось до получения готового материала. Повторите генерацию.`;
  }
