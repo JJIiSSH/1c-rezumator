@@ -28,10 +28,12 @@ test('Квота, частота запросов, размер контекст
  assert.match(generationError({message:'Selected model is at capacity. Please try a different model.'},'openai').message,/Выберите другую модель/);
 });
 
-async function fixture(t,{events=[],stderr='',exit=0,claudeResponse}){
+async function fixture(t,{events=[],stderr='',exit=0,claudeResponse,chunkBytes=false}){
  const dir=await mkdtemp(path.join(tmpdir(),'rezumator-runner-'));t.after(()=>rm(dir,{recursive:true,force:true}));
  const cli=path.join(dir,'fake-cli');
- await writeFile(cli,`#!${process.execPath}\nprocess.stdin.resume();process.stdin.on('end',()=>{process.stderr.write(${JSON.stringify(stderr)});process.stdout.write(${JSON.stringify(claudeResponse===undefined?events.map(e=>JSON.stringify(e)).join('\n')+'\n':JSON.stringify(claudeResponse))});process.exit(${exit});});`,{mode:0o700});
+ const output=claudeResponse===undefined?events.map(e=>JSON.stringify(e)).join('\n')+'\n':JSON.stringify(claudeResponse);
+ const writer=chunkBytes?`for(const byte of Buffer.from(${JSON.stringify(output)})){process.stdout.write(Buffer.from([byte]));await new Promise(resolve=>setTimeout(resolve,2));}`:`process.stdout.write(${JSON.stringify(output)});`;
+ await writeFile(cli,`#!${process.execPath}\nprocess.stdin.resume();process.stdin.on('end',async()=>{process.stderr.write(${JSON.stringify(stderr)});${writer}process.exit(${exit});});`,{mode:0o700});
  return overrides=>runModel({job:{status:'running'},prompt:'fixture',schemaPath:path.join(dir,'schema.json'),schema:{},settings:{provider:'openai',model:'fixture',reasoning_effort:'high'},desktop:false,codex:cli,claude:cli,cwd:dir,env:process.env,...overrides});
 }
 test('Последняя ошибка провайдера приоритетнее нерелевантной usage/quota записи stderr',async t=>{
@@ -50,4 +52,12 @@ test('Восстановленный поток с подтверждённым 
 test('Claude usage в JSON не превращает неизвестную ошибку в исчерпанную квоту',async t=>{
  const run=await fixture(t,{claudeResponse:{is_error:true,result:'Invalid output schema',usage:{input_tokens:10}}});
  await assert.rejects(run({settings:{provider:'anthropic',model:'fixture',reasoning_effort:'high'}}),e=>e.code==='GENERATION_FAILED');
+});
+
+test('UTF-8 сохраняется при разрыве каждого символа между stdout chunks обоих провайдеров',async t=>{
+ const text='подразделения, подсистема, контроль 🔧';
+ const codex=await fixture(t,{chunkBytes:true,events:[{type:'item.completed',item:{type:'agent_message',text}},{type:'turn.completed'}]});
+ assert.equal((await codex()).text,text);
+ const claude=await fixture(t,{chunkBytes:true,claudeResponse:{structured_output:{text}}});
+ assert.equal(JSON.parse((await claude({settings:{provider:'anthropic',model:'fixture',reasoning_effort:'high'}})).text).text,text);
 });

@@ -41,9 +41,11 @@ export function runModel({job,prompt,schemaPath,schema,settings,desktop,codex,cl
   const timer=setTimeout(()=>terminate('Один этап генерации занял больше 8 минут. Повторите запрос.'),timeoutMs);
   child.stdin.on('error',()=>{});
   child.on('error',()=>{clearTimeout(timer);transportError=Error(`Не удалось запустить ${name}. Проверьте установку приложения.`);});
+  // Preserve UTF-8 characters split across process output chunks.
+  child.stdout.setEncoding('utf8');child.stderr.setEncoding('utf8');
   child.stderr.on('data',c=>{errorText=(errorText+c.toString()).slice(-12000);});
   child.stdout.on('data',c=>{
-   size+=c.length;if(size>2_000_000){terminate(`Слишком большой ответ ${name}`);return;}
+   size+=Buffer.byteLength(c,'utf8');if(size>2_000_000){terminate(`Слишком большой ответ ${name}`);return;}
    buffer+=c.toString();if(provider==='anthropic')return;
    let n;while((n=buffer.indexOf('\n'))>=0){const line=buffer.slice(0,n);buffer=buffer.slice(n+1);try{const e=JSON.parse(line);if(e.type==='item.completed'&&e.item?.type==='agent_message')last=e.item.text;if(e.type==='turn.completed'){usage=e.usage;failure=null;}if(e.type==='turn.failed'||e.type==='error')failure=e.error||e.message||{};}catch{}}
   });

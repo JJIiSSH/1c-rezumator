@@ -21,6 +21,8 @@ export class DriveClient extends NotionClient{
   return {title:meta.properties?.title||meta.title||'Таблица учеников',sheetTitle:sheet.title,gid:sheet.sheetId,rowCount:sheet.gridProperties?.rowCount||0};
  }
  async readStudents(students,progress=()=>{},source={id:sheetId,gid:0}){
+  // Connector sessions can expire while the local service stays open for days.
+  this.close();
   progress('Читаем Google-таблицу…');
   const meta=await this.call('get_spreadsheet_metadata',{spreadsheet_id:source.id});
   const sheet=meta.sheets?.find(s=>s.properties?.sheetId===(source.gid||0))?.properties;
